@@ -1,0 +1,43 @@
+#!/usr/bin/env python3
+
+import argparse
+import logging
+
+import requests
+
+def main() -> None:
+	arg_parser = argparse.ArgumentParser()
+	arg_parser.add_argument("--log-level", default=None, choices=("info", "debug", "warning"))
+	parsed_args = arg_parser.parse_args()
+
+	match parsed_args.log_level:
+		case None:
+			logging.basicConfig()
+		case "info":
+			logging.basicConfig(level=logging.INFO)
+		case "debug":
+			logging.basicConfig(level=logging.DEBUG)
+		case "warning":
+			logging.basicConfig(level=logging.WARNING)
+		case log_level:
+			raise Exception(f"internal error x8nnvdpbhn: unknown log level name: {log_level}")
+
+	url = "https://api.github.com/repos/llvm/llvm-project/releases"
+	headers = {
+		"Accept": "application/vnd.github+json",
+		"X-GitHub-Api-Version": "2022-11-28",
+	}
+	logging.info("Getting releases from %s", url)
+
+	response = requests.get(url, headers=headers)
+	response.raise_for_status()
+	releases = response.json()
+
+	release_names = tuple(release["name"] for release in releases)
+	versions = tuple(release_name[5:] for release_name in release_names)
+
+	print(" ".join(versions))
+
+
+if __name__ == "__main__":
+	main()
