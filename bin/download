@@ -11,5 +11,4 @@ readonly args=(
 	"--llvm-release-keys-file=$base_dir/release-keys.asc"
 )
 
-echo "${args[*]}"
 exec "${args[@]}"

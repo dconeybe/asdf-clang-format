@@ -11,5 +11,4 @@ readonly args=(
 	"--install-dir=$ASDF_INSTALL_PATH"
 )
 
-echo "${args[*]}"
 exec "${args[@]}"
