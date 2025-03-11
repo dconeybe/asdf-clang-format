@@ -6,6 +6,7 @@ import dataclasses
 import logging
 import pathlib
 import platform
+import shutil
 import sys
 import tarfile
 import tempfile
@@ -80,40 +81,20 @@ def install(
     llvm_release_keys_file: pathlib.Path,
 ) -> None:
   logging.info("Installing clang-format version %s", version_to_install)
-  releases = get_llvm_releases()
-  releases_to_install = [release for release in releases if release.version == version_to_install]
 
-  if len(releases_to_install) == 0:
-    raise ClangFormatVersionNotFoundError(
-        f"clang-format version not found: {version_to_install} (error code bef3e5b3ap)"
-    )
-  elif len(releases_to_install) > 1:
-    raise MultipleClangFormatVersionsFoundError(
-        f"{len(releases_to_install)} clang-format versions found "
-        f"for version {version_to_install}, but expected exactly 1"
-        " (error code gcn7ebjkj3)"
-    )
-  release_to_install = releases_to_install[0]
+  llvm_release = get_llvm_release(version_to_install)
 
-  uname = platform.uname()
-  match (uname.system.lower(), uname.machine.lower()):
-    case ("linux", "x86_64"):
-      asset_name_suffix = "Linux-X64.tar.xz"
-    case (unknown_system, unknown_machine):
-      raise UnsupportedPlatformError(
-          f"unsupported platform: system={unknown_system} machine={unknown_machine}"
-          " (error code fvwnvmtmav)"
-      )
-  asset_name = "LLVM-" + version_to_install + "-" + asset_name_suffix
+  asset_name_platform = llvm_release_asset_name_platform_component()
+  asset_name = "LLVM-" + version_to_install + "-" + asset_name_platform + ".tar.xz"
 
   signature_downloader = AssetDownloader(
-      asset=asset_with_name(release_to_install.assets, asset_name + ".sig"),
+      asset=asset_with_name(llvm_release.assets, asset_name + ".sig"),
       dest_file=download_dir / (asset_name + ".sig"),
   )
   signature_downloader.download()
 
   tarxz_downloader = AssetDownloader(
-      asset=asset_with_name(release_to_install.assets, asset_name),
+      asset=asset_with_name(llvm_release.assets, asset_name),
       dest_file=download_dir / asset_name,
       signature_file=signature_downloader.dest_file,
       public_keys_file=llvm_release_keys_file,
@@ -121,20 +102,11 @@ def install(
   tarxz_downloader.download_if_needed_and_verify_pgp_signature()
 
   clang_format_file = download_dir / "clang-format"
-  tarxz_file = tarxz_downloader.dest_file
-  logging.info("Extracting clang-format from %s to %s", tarxz_file, clang_format_file)
-  with tarfile.open(tarxz_file, "r:xz") as tar_file:
-    clang_format_tar_infos: list[tarfile.TarInfo] = []
-    for tar_info in tar_file:
-      if not tar_info.isfile():
-        continue
-      tar_info_path = pathlib.PurePosixPath(tar_info.name)
-      if tar_info_path.name != "clang-format":
-        continue
-      clang_format_tar_infos.append(tar_info)
-
-  for tar_info in clang_format_tar_infos:
-    logging.info("Extracting %s from %s to %s", tar_info.name, tarxz_file, clang_format_file)
+  untar_single_file(
+      tarxz_file=tarxz_downloader.dest_file,
+      dest_file=clang_format_file,
+      file_name="clang-format",
+  )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -184,6 +156,25 @@ def get_llvm_releases() -> list[LlvmReleaseInfo]:
   return llvm_release_infos
 
 
+def get_llvm_release(version: str) -> LlvmReleaseInfo:
+  releases = get_llvm_releases()
+  releases_with_desired_version = [release for release in releases if release.version == version]
+
+  match len(releases_with_desired_version):
+    case 0:
+      raise ClangFormatVersionNotFoundError(
+          f"clang-format version not found: {version} (error code bef3e5b3ap)"
+      )
+    case 1:
+      return releases_with_desired_version[0]
+    case num_versions_found:
+      raise MultipleClangFormatVersionsFoundError(
+          f"{num_versions_found} clang-format versions found "
+          f"for version {version}, but expected exactly 1 "
+          "(error code gcn7ebjkj3)"
+      )
+
+
 def asset_with_name(assets: Sequence[LlvmReleaseAsset], name: str) -> LlvmReleaseAsset:
   found_assets: list[LlvmReleaseAsset] = [asset for asset in assets if asset.name == name]
   match len(found_assets):
@@ -191,7 +182,7 @@ def asset_with_name(assets: Sequence[LlvmReleaseAsset], name: str) -> LlvmReleas
       all_asset_names = ", ".join(sorted(asset.name for asset in assets))
       raise AssetNotFoundError(
           f"asset not found: {name} "
-          f"(existing asset names: {all_asset_names})"
+          f"(existing asset names: {all_asset_names}) "
           "(error code pmc65927rm)"
       )
     case 1:
@@ -199,9 +190,66 @@ def asset_with_name(assets: Sequence[LlvmReleaseAsset], name: str) -> LlvmReleas
     case num_found_assets:
       raise MultipleAssetsFoundError(
           f"found {num_found_assets} assets with name {name}, "
-          "but expected exactly 1"
-          "(error code p7fta9kgv4)"
+          "but expected exactly 1 (error code p7fta9kgv4)"
       )
+
+
+def llvm_release_asset_name_platform_component() -> str:
+  uname_result = platform.uname()
+
+  match (uname_result.system.lower(), uname_result.machine.lower()):
+    case ("linux", "x86_64"):
+      return "Linux-X64"
+    case (unknown_system, unknown_machine):
+      raise UnsupportedPlatformError(
+          f"unsupported platform: system={unknown_system} machine={unknown_machine} "
+          "(error code fvwnvmtmav)"
+      )
+
+
+def untar_single_file(tarxz_file: pathlib.Path, dest_file: pathlib.Path, file_name: str):
+  logging.info("Extracting %s from %s to %s", file_name, tarxz_file, dest_file)
+
+  with tarfile.open(tarxz_file, "r:xz") as tar_file:
+    matching_tar_infos: list[tarfile.TarInfo] = []
+
+    for tar_info in tar_file:
+      if not tar_info.isfile():
+        continue
+      tar_info_path = pathlib.PurePosixPath(tar_info.name)
+      if tar_info_path.name != file_name:
+        continue
+
+      matching_tar_infos.append(tar_info)
+      if len(matching_tar_infos) > 1:
+        continue  # An error will be reported later.
+
+      logging.info("Extracting %s from %s to %s", tar_info.name, tarxz_file, dest_file)
+      with tempfile.TemporaryDirectory() as temp_dir:
+        tar_file.extract(tar_info, temp_dir, filter="data")
+        temp_file = pathlib.Path(temp_dir) / tar_info.name
+        shutil.move(temp_file, dest_file)
+
+  match len(matching_tar_infos):
+    case 0:
+      raise FileNotFoundInTarFileError(
+          f"no file named {file_name} found in tar file: {tarxz_file} (error code j9ebr9gyhb)"
+      )
+    case 1:
+      pass
+    case num_files_found:
+      raise MultipleFilesFoundInTarFileError(
+          f"{num_files_found} files named {file_name} found in tar file {tarxz_file}, "
+          "but expected exactly 1 (error code cstaaxdsn9)"
+      )
+
+
+class FileNotFoundInTarFileError(Exception):
+  pass
+
+
+class MultipleFilesFoundInTarFileError(Exception):
+  pass
 
 
 class AssetDownloader:
@@ -301,9 +349,7 @@ class AssetDownloader:
         dest_file,
     )
     if download_num_bytes < 0:
-      raise Exception(
-          f"invalid download_num_bytes: {download_num_bytes:,} " "(error code px5e9pqbaz)"
-      )
+      raise Exception(f"invalid download_num_bytes: {download_num_bytes:,} (error code px5e9pqbaz)")
 
     dest_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -324,8 +370,7 @@ class AssetDownloader:
               raise cls.TooManyBytesDownloadedError(
                   f"Downloaded {downloaded_num_bytes:,} bytes from {download_url}, "
                   f"which is {downloaded_num_bytes - download_num_bytes:,} bytes more "
-                  f"than expected ({download_num_bytes:,}) "
-                  "(error code cv7fp9jb2e)"
+                  f"than expected ({download_num_bytes:,}) (error code cv7fp9jb2e)"
               )
 
             output_file.write(chunk)
@@ -335,8 +380,7 @@ class AssetDownloader:
           raise cls.TooFewBytesDownloadedError(
               f"Downloaded {downloaded_num_bytes:,} bytes from {download_url}, "
               f"which is {download_num_bytes - downloaded_num_bytes:,} bytes fewer "
-              f"than expected ({download_num_bytes:,}) "
-              "(error code rf4n374kdm)"
+              f"than expected ({download_num_bytes:,}) (error code rf4n374kdm)"
           )
 
   @classmethod
