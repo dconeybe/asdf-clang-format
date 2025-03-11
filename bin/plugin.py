@@ -9,6 +9,7 @@ import platform
 import sys
 
 import requests
+import tqdm
 
 
 def main() -> None:
@@ -127,11 +128,19 @@ def install(version_to_install: str, download_dir: pathlib.Path) -> None:
   download_dir.mkdir(parents=True, exist_ok=True)
   download_file = download_dir / asset_name
 
-  with requests.get(download_url, stream=True) as response:
-    response.raise_for_status()
-    with download_file.open("wb") as output_file:
-      for chunk in response.iter_content(chunk_size=8192):
-        output_file.write(chunk)
+  progress_bar_context_manager = tqdm.tqdm(
+      total=download_num_bytes,
+      leave=False,
+      unit=" bytes",
+      dynamic_ncols=True,
+  )
+  with progress_bar_context_manager as progress_bar:
+    with requests.get(download_url, stream=True) as response:
+      response.raise_for_status()
+      with download_file.open("wb") as output_file:
+        for chunk in response.iter_content(chunk_size=65536):
+          output_file.write(chunk)
+          progress_bar.update(len(chunk))
 
 
 @dataclasses.dataclass(frozen=True)
