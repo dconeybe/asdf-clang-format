@@ -4,6 +4,8 @@ import argparse
 from collections.abc import Sequence
 import dataclasses
 import logging
+import pathlib
+import platform
 import sys
 
 import requests
@@ -21,6 +23,7 @@ def main() -> None:
   install_subparser = subparsers.add_parser("install")
   install_subparser.set_defaults(command="install")
   install_subparser.add_argument("--install-version", required=True)
+  install_subparser.add_argument("--download-dir", required=True)
 
   parsed_args = arg_parser.parse_args()
 
@@ -38,13 +41,18 @@ def main() -> None:
 
   match parsed_args.command:
     case None:
-      print("ERROR: no sub-command specified", file=sys.stderr)
+      print("ERROR: no sub-command specified (error code j53fg4ce6r)", file=sys.stderr)
       print("Run with --help for help", file=sys.stderr)
       sys.exit(2)
     case "list-all":
       list_all()
     case "install":
-      install(parsed_args.install_version)
+      version_to_install = parsed_args.install_version
+      download_dir = pathlib.Path(parsed_args.download_dir)
+      install(
+          version_to_install=version_to_install,
+          download_dir=download_dir,
+      )
     case unknown_command:
       raise Exception(f"internal error ysnynaqa84: unknown command: {unknown_command}")
 
@@ -55,26 +63,75 @@ def list_all() -> None:
   print(versions_str)
 
 
-def install(version_to_install: str) -> None:
+def install(version_to_install: str, download_dir: pathlib.Path) -> None:
   logging.info("Installing clang-format version %s", version_to_install)
   releases = get_llvm_releases()
   releases_to_install = [release for release in releases if release.version == version_to_install]
 
   if len(releases_to_install) == 0:
-    print(f"ERROR: version not found: {version_to_install}", file=sys.stderr)
+    print(
+        f"ERROR: version not found: {version_to_install}" " (error code bef3e5b3ap)",
+        file=sys.stderr,
+    )
     sys.exit(1)
   elif len(releases_to_install) > 1:
     print(
         f"ERROR: {len(releases_to_install)} versions found "
-        f"for version {version_to_install}, but expected exactly 1.",
+        f"for version {version_to_install}, but expected exactly 1."
+        " (error code gcn7ebjkj3)",
         file=sys.stderr,
     )
     sys.exit(1)
-
   release_to_install = releases_to_install[0]
-  import pprint
 
-  pprint.pprint(releases_to_install)
+  uname = platform.uname()
+  match (uname.system.lower(), uname.machine.lower()):
+    case ("linux", "x86_64"):
+      asset_name_suffix = "Linux-X64.tar.xz"
+    case (unknown_system, unknown_machine):
+      print(
+          f"ERROR: unknown download for system={unknown_system} and "
+          f"machine={unknown_machine}"
+          " (error code fvwnvmtmav)",
+          file=sys.stderr,
+      )
+      sys.exit(2)
+  asset_name = "LLVM-" + version_to_install + "-" + asset_name_suffix
+
+  assets_with_desired_name = [
+      asset for asset in release_to_install.assets if asset.name == asset_name
+  ]
+  if len(assets_with_desired_name) == 0:
+    print(
+        f"ERROR: asset not found for version {version_to_install}: {asset_name}"
+        " (error code a5kqq26axm)",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+  elif len(assets_with_desired_name) > 1:
+    print(
+        f"ERROR: {len(assets_with_desired_name)} assets found for versions {version_to_install} "
+        f"with name {asset_name}, but expected exactly 1."
+        " (error code zmje2rr9wt)",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+  asset_to_install = assets_with_desired_name[0]
+
+  download_url = asset_to_install.download_url
+  download_num_bytes = asset_to_install.size
+  logging.info(
+      "Downloading %s (%s bytes) to %s", download_url, f"{download_num_bytes:,}", download_dir
+  )
+
+  download_dir.mkdir(parents=True, exist_ok=True)
+  download_file = download_dir / asset_name
+
+  with requests.get(download_url, stream=True) as response:
+    response.raise_for_status()
+    with download_file.open("wb") as output_file:
+      for chunk in response.iter_content(chunk_size=8192):
+        output_file.write(chunk)
 
 
 @dataclasses.dataclass(frozen=True)
