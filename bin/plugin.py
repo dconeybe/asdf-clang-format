@@ -10,6 +10,7 @@ import shutil
 import sys
 import tarfile
 import tempfile
+import typing
 
 import gnupg
 import requests
@@ -25,12 +26,17 @@ def main() -> None:
   list_all_subparser = subparsers.add_parser("list-all")
   list_all_subparser.set_defaults(command="list-all")
 
+  install_subparser = subparsers.add_parser("download")
+  install_subparser.set_defaults(command="download")
+  install_subparser.add_argument("--clang-format-version", required=True)
+  install_subparser.add_argument("--download-dir", required=True)
+  install_subparser.add_argument("--llvm-release-keys-file", required=True)
+
   install_subparser = subparsers.add_parser("install")
   install_subparser.set_defaults(command="install")
-  install_subparser.add_argument("--install-version", required=True)
+  install_subparser.add_argument("--clang-format-version", required=True)
   install_subparser.add_argument("--download-dir", required=True)
   install_subparser.add_argument("--install-dir", required=True)
-  install_subparser.add_argument("--llvm-release-keys-file", required=True)
 
   parsed_args = arg_parser.parse_args()
 
@@ -53,16 +59,23 @@ def main() -> None:
       sys.exit(2)
     case "list-all":
       list_all()
+    case "download":
+      clang_format_version = parsed_args.clang_format_version
+      download_dir = pathlib.Path(parsed_args.download_dir)
+      llvm_release_keys_file = pathlib.Path(parsed_args.llvm_release_keys_file)
+      download(
+          clang_format_version=clang_format_version,
+          download_dir=download_dir,
+          llvm_release_keys_file=llvm_release_keys_file,
+      )
     case "install":
-      version_to_install = parsed_args.install_version
+      clang_format_version = parsed_args.clang_format_version
       download_dir = pathlib.Path(parsed_args.download_dir)
       install_dir = pathlib.Path(parsed_args.install_dir)
-      llvm_release_keys_file = pathlib.Path(parsed_args.llvm_release_keys_file)
       install(
-          version_to_install=version_to_install,
+          clang_format_version=clang_format_version,
           download_dir=download_dir,
           install_dir=install_dir,
-          llvm_release_keys_file=llvm_release_keys_file,
       )
     case unknown_command:
       raise Exception(f"internal error ysnynaqa84: unknown command: {unknown_command}")
@@ -74,39 +87,69 @@ def list_all() -> None:
   print(versions_str)
 
 
-def install(
-    version_to_install: str,
+def download(
+    clang_format_version: str,
     download_dir: pathlib.Path,
-    install_dir: pathlib.Path,
     llvm_release_keys_file: pathlib.Path,
 ) -> None:
-  logging.info("Installing clang-format version %s", version_to_install)
-
-  llvm_release = get_llvm_release(version_to_install)
-
+  logging.info("Downloading clang-format version %s", clang_format_version)
   asset_name_platform = llvm_release_asset_name_platform_component()
-  asset_name = "LLVM-" + version_to_install + "-" + asset_name_platform + ".tar.xz"
+  asset_name = "LLVM-" + clang_format_version + "-" + asset_name_platform + ".tar.xz"
+
+  # Keep a hard reference to the TemporaryDirectory object so that it does not
+  # get cleaned up until it is no longer needed.
+  temporary_directory = tempfile.TemporaryDirectory()
+  temp_dir = pathlib.Path(temporary_directory.name)
+
+  llvm_release = get_llvm_release(clang_format_version)
 
   signature_downloader = AssetDownloader(
       asset=asset_with_name(llvm_release.assets, asset_name + ".sig"),
-      dest_file=download_dir / (asset_name + ".sig"),
+      dest_file=temp_dir / (asset_name + ".sig"),
   )
   signature_downloader.download()
 
   tarxz_downloader = AssetDownloader(
       asset=asset_with_name(llvm_release.assets, asset_name),
-      dest_file=download_dir / asset_name,
+      dest_file=temp_dir / asset_name,
       signature_file=signature_downloader.dest_file,
       public_keys_file=llvm_release_keys_file,
   )
-  tarxz_downloader.download_if_needed_and_verify_pgp_signature()
+  tarxz_downloader.download_and_verify_pgp_signature()
 
-  clang_format_file = download_dir / "clang-format"
-  untar_single_file(
+  downloaded_clang_format_file = untar_single_file(
       tarxz_file=tarxz_downloader.dest_file,
-      dest_file=clang_format_file,
+      dest_dir=pathlib.Path(tempfile.mkdtemp(dir=temp_dir)),
       file_name="clang-format",
+      estimated_num_entries=11000,
   )
+
+  installed_clang_format_file = download_dir / "clang-format"
+  logging.info(
+      "Moving %s to %s",
+      downloaded_clang_format_file,
+      installed_clang_format_file,
+  )
+  installed_clang_format_file.parent.mkdir(parents=True, exist_ok=True)
+  shutil.move(downloaded_clang_format_file, installed_clang_format_file)
+
+
+def install(
+    clang_format_version: str,
+    download_dir: pathlib.Path,
+    install_dir: pathlib.Path,
+) -> None:
+  logging.info("Installing clang-format version %s", clang_format_version)
+
+  src_file = download_dir / "clang-format"
+  if not src_file.exists():
+    raise DownloadedFileNotFoundError(f"file not found: {src_file} (error code vagvf88aer)")
+
+  dest_file = install_dir / "bin" / "clang-format"
+  logging.info("Copying %s to %s", src_file, dest_file)
+
+  dest_file.parent.mkdir(parents=True, exist_ok=True)
+  shutil.copy2(src_file, dest_file)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -207,28 +250,51 @@ def llvm_release_asset_name_platform_component() -> str:
       )
 
 
-def untar_single_file(tarxz_file: pathlib.Path, dest_file: pathlib.Path, file_name: str):
-  logging.info("Extracting %s from %s to %s", file_name, tarxz_file, dest_file)
+def untar_single_file(
+    tarxz_file: pathlib.Path,
+    dest_dir: pathlib.Path,
+    file_name: str,
+    estimated_num_entries: int,
+) -> pathlib.Path:
+  logging.info("Extracting %s from %s to %s", file_name, tarxz_file, dest_dir)
 
-  with tarfile.open(tarxz_file, "r:xz") as tar_file:
+  logging.info("Searching for %s in %s", file_name, tarxz_file)
+
+  # TODO: remove the typing cruft below once pyright recognizes the "r|xz" argument;
+  # at the time of writing, it doesn't recognize these "streaming" modes, but only
+  # the basic modes, like "r:xz".
+  tar_file = tarfile.open(  # pyright: ignore[reportUnknownVariableType,reportCallIssue]
+      tarxz_file,
+      "r|xz",  # pyright: ignore[reportArgumentType]
+  )
+
+  progress_bar_context_manager = tqdm.tqdm(
+      total=estimated_num_entries,
+      leave=False,
+      unit=" files",
+      dynamic_ncols=True,
+  )
+
+  tar_file = typing.cast(tarfile.TarFile, tar_file)
+  with tar_file, progress_bar_context_manager as progress_bar:
     matching_tar_infos: list[tarfile.TarInfo] = []
-
     for tar_info in tar_file:
+      progress_bar.update(1)
       if not tar_info.isfile():
         continue
+
       tar_info_path = pathlib.PurePosixPath(tar_info.name)
       if tar_info_path.name != file_name:
         continue
 
+      logging.info("Found %s in %s: %s", file_name, tarxz_file, tar_info.name)
       matching_tar_infos.append(tar_info)
       if len(matching_tar_infos) > 1:
-        continue  # An error will be reported later.
+        continue  # The error will be reported later on.
 
+      dest_file = dest_dir / tar_info.name
       logging.info("Extracting %s from %s to %s", tar_info.name, tarxz_file, dest_file)
-      with tempfile.TemporaryDirectory() as temp_dir:
-        tar_file.extract(tar_info, temp_dir, filter="data")
-        temp_file = pathlib.Path(temp_dir) / tar_info.name
-        shutil.move(temp_file, dest_file)
+      tar_file.extract(tar_info, dest_dir, filter="data")
 
   match len(matching_tar_infos):
     case 0:
@@ -236,7 +302,9 @@ def untar_single_file(tarxz_file: pathlib.Path, dest_file: pathlib.Path, file_na
           f"no file named {file_name} found in tar file: {tarxz_file} (error code j9ebr9gyhb)"
       )
     case 1:
-      pass
+      # It is safe to ignore the pyright typing error below as this code path can _only_ be
+      # reached if `dest_file` has been bound.
+      return dest_file  # pyright: ignore[reportPossiblyUnboundVariable]
     case num_files_found:
       raise MultipleFilesFoundInTarFileError(
           f"{num_files_found} files named {file_name} found in tar file {tarxz_file}, "
@@ -268,56 +336,6 @@ class AssetDownloader:
 
   def download(self) -> None:
     self._download(self.asset, self.dest_file)
-
-  def download_if_needed_and_verify_pgp_signature(self) -> None:
-    asset = self.asset
-    dest_file = self.dest_file
-
-    if not dest_file.exists():
-      self.download_and_verify_pgp_signature()
-      return
-
-    logging.info(
-        "Previously-downloaded file %s exists; verifying that it is the expected size (%s bytes)",
-        dest_file,
-        f"{asset.size:,}",
-    )
-
-    try:
-      stat_result = dest_file.stat()
-    except OSError as e:
-      logging.warning(
-          "Unable to determine size of previously-downloaded file %s: %s; re-downloading",
-          dest_file,
-          e.strerror,
-      )
-      self.download_and_verify_pgp_signature()
-      return
-
-    if stat_result.st_size != asset.size:
-      logging.warning(
-          "Previously-downloaded file %s has size %s bytes, "
-          "but expected %s bytes; re-downloading it",
-          dest_file,
-          f"{stat_result.st_size:,}",
-          f"{asset.size:,}",
-      )
-      self.download_and_verify_pgp_signature()
-      return
-
-    try:
-      self.verify_pgp_signature()
-    except self.SignatureVerificationError as e:
-      logging.warning(
-          "Failed to verify signature of previously-downloaded file %s: " "%s; re-downloading",
-          dest_file,
-          e,
-      )
-    else:
-      # Signature verification successful; nothing to do, so return as if successful.
-      return
-
-    self.download_and_verify_pgp_signature()
 
   def download_and_verify_pgp_signature(self) -> None:
     self._download(self.asset, self.dest_file)
@@ -441,6 +459,10 @@ class MultipleClangFormatVersionsFoundError(Exception):
 
 
 class UnsupportedPlatformError(Exception):
+  pass
+
+
+class DownloadedFileNotFoundError(Exception):
   pass
 
 

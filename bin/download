@@ -5,10 +5,10 @@ readonly base_dir="$(dirname "$0")"
 readonly args=(
 	python
 	"$base_dir/plugin.py"
-	install
+	download
 	"--clang-format-version=$ASDF_INSTALL_VERSION"
 	"--download-dir=$ASDF_DOWNLOAD_PATH"
-	"--install-dir=$ASDF_INSTALL_PATH"
+	"--llvm-release-keys-file=$base_dir/release-keys.asc"
 )
 
 echo "${args[*]}"
