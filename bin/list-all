@@ -1,2 +1,10 @@
 #!/usr/bin/env bash
-exec python "$(dirname "$0")/plugin.py" list-all
+
+readonly args=(
+	python
+	"$(dirname "$0")/plugin.py"
+	list-all
+)
+
+echo "${args[*]}"
+exec "${args[@]}"

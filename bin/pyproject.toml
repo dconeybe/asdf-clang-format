@@ -1,6 +1,7 @@
 [project]
 requires-python = ">= 3.13"
 dependencies = [
+	"python-gnupg",
 	"requests",
 	"tqdm",
 ]
