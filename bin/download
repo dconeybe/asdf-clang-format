@@ -6,12 +6,13 @@ readonly current_script_path="${BASH_SOURCE[0]}"
 readonly plugin_dir="$(dirname "$(dirname "$current_script_path")")/lib"
 
 readonly args=(
-	python
-	"$plugin_dir/plugin.py"
-	download
-	"--clang-format-version=$ASDF_INSTALL_VERSION"
-	"--download-dir=$ASDF_DOWNLOAD_PATH"
-	"--llvm-release-keys-file=$plugin_dir/release-keys.asc"
+  python
+  "$plugin_dir/plugin.py"
+  "--quiet"
+  download
+  "--clang-format-version=$ASDF_INSTALL_VERSION"
+  "--download-dir=$ASDF_DOWNLOAD_PATH"
+  "--llvm-release-keys-file=$plugin_dir/release-keys.asc"
 )
 
 exec "${args[@]}"
