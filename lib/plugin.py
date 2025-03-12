@@ -179,6 +179,7 @@ class PersistentTempDirFactory(TempDirFactory):
 
   def get(self, name: str) -> PersistentTempDir:
     scrubbed_name = scrubbed_file_name(name)
+    self.path.mkdir(parents=True, exist_ok=True)
     temp_dir = tempfile.mkdtemp(prefix=f"{scrubbed_name}_", dir=self.path)
     return PersistentTempDir(pathlib.Path(temp_dir))
 
@@ -252,6 +253,7 @@ def download(
   temp_dir_factory: TempDirFactory,
   logger: logging.Logger,
 ) -> None:
+  print(f"zzyzx {temp_dir_factory!r}")
   logger.info("Downloading clang-format version %s", clang_format_version)
   artifact = get_llvm_github_artifact_for_current_platform(clang_format_version, logger)
 
@@ -280,7 +282,7 @@ def download(
 
   downloaded_clang_format_file = untar_single_file(
     tarxz_file=tarxz_downloader.dest_file,
-    dest_dir=pathlib.Path(tempfile.mkdtemp(dir=temp_dir.path)),
+    dest_dir=temp_dir.subdir("clang_format_bin"),
     file_name="clang-format",
     estimated_num_entries=11000,
     logger=logger,
@@ -316,7 +318,7 @@ def install(
 
 
 def scrubbed_file_name(s: str) -> str:
-  return "".join(c if c.isidentifier() else "_" for c in s)
+  return "".join(c if c.isalnum() or c.isidentifier() else "_" for c in s)
 
 
 @dataclasses.dataclass(frozen=True)
