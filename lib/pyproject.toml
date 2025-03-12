@@ -3,15 +3,15 @@ name = "asdf-clang-format"
 version = "1.0.0"
 requires-python = ">= 3.13"
 dependencies = [
-	"python-gnupg",
-	"requests",
-	"tqdm",
+  "python-gnupg",
+  "requests",
+  "tqdm",
 ]
 
 [project.optional-dependencies]
 dev = [
-	"pyink",
-	"pyright",
+  "pyink",
+  "pyright",
 ]
 
 [tool.pyright]
