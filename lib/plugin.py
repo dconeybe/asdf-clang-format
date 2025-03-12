@@ -253,7 +253,6 @@ def download(
   temp_dir_factory: TempDirFactory,
   logger: logging.Logger,
 ) -> None:
-  print(f"zzyzx {temp_dir_factory!r}")
   logger.info("Downloading clang-format version %s", clang_format_version)
   artifact = get_llvm_github_artifact_for_current_platform(clang_format_version, logger)
 
