@@ -48,10 +48,11 @@ def main() -> None:
   list_all_subparser = subparsers.add_parser("list-all")
   list_all_subparser.set_defaults(command="list-all")
 
-  install_subparser = subparsers.add_parser("download")
-  install_subparser.set_defaults(command="download")
-  install_subparser.add_argument("--clang-format-version", required=True)
-  install_subparser.add_argument("--download-dir", required=True)
+  download_subparser = subparsers.add_parser("download")
+  download_subparser.set_defaults(command="download")
+  download_subparser.add_argument("--clang-format-version", required=True)
+  download_subparser.add_argument("--download-dir", required=True)
+  download_subparser.add_argument("--stop-after-verify", action="store_true", default=False)
 
   install_subparser = subparsers.add_parser("install")
   install_subparser.set_defaults(command="install")
@@ -88,6 +89,7 @@ def main() -> None:
       download(
         clang_format_version=clang_format_version,
         download_dir=download_dir,
+        stop_after_verify=parsed_args.stop_after_verify,
         logger=logger,
       )
     case "install":
@@ -127,6 +129,7 @@ def list_all(logger: logging.Logger) -> None:
 def download(
   clang_format_version: str,
   download_dir: pathlib.Path,
+  stop_after_verify: bool,
   logger: logging.Logger,
 ) -> None:
   logger.info("Downloading clang-format version %s", clang_format_version)
@@ -153,6 +156,10 @@ def download(
     logger=logger,
   )
   tarxz_downloader.download_and_verify_sigstore_signature(clang_format_version)
+
+  if stop_after_verify:
+    logging.info("Stopping after verifying the signature of %s, as requested", tarxz_file_name)
+    return
 
   downloaded_clang_format_file = untar_single_file(
     tarxz_file=tarxz_downloader.dest_file,
