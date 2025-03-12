@@ -10,6 +10,8 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from types import TracebackType
+from typing import Type
 import typing
 
 import requests
@@ -41,6 +43,12 @@ def main() -> None:
     const="warning",
     dest=log_level_arg.dest,
     help=f"shorthand for {log_level_arg.option_strings[0]}=%(const)s",
+  )
+  arg_parser.add_argument(
+    "--temp-dir",
+    default=None,
+    help="The directory to use as a temporary directory, instead of creating and deleting "
+    "ephemeral temporary directories (useful for debugging)",
   )
 
   subparsers = arg_parser.add_subparsers()
@@ -86,10 +94,16 @@ def main() -> None:
     case "download":
       clang_format_version = parsed_args.clang_format_version
       download_dir = pathlib.Path(parsed_args.download_dir)
+      match parsed_args.temp_dir:
+        case None:
+          temp_dir_factory = EphemeralTempDirFactory()
+        case temp_dir:
+          temp_dir_factory = PersistentTempDirFactory(pathlib.Path(temp_dir))
       download(
         clang_format_version=clang_format_version,
         download_dir=download_dir,
         stop_after_verify=parsed_args.stop_after_verify,
+        temp_dir_factory=temp_dir_factory,
         logger=logger,
       )
     case "install":
@@ -104,6 +118,76 @@ def main() -> None:
       )
     case unknown_command:
       raise Exception(f"internal error ysnynaqa84: unknown command: {unknown_command}")
+
+
+class TempDir(typing.Protocol):
+
+  path: pathlib.Path
+
+  def cleanup(self) -> None:
+    ...
+
+  def __enter__(self) -> pathlib.Path:
+    ...
+
+  def __exit__(self, exc_type: Type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None) -> bool | None:
+    ...
+
+
+class TempDirFactory(typing.Protocol):
+
+  def get(self, name: str) -> TempDir:
+    ...
+
+
+class PersistentTempDir(TempDir):
+
+  def __init__(self, path: pathlib.Path) -> None:
+    self.path = path
+
+  def cleanup(self) -> None:
+    # Do nothing on cleanup; we are a a "persistent" temporary directory after all.
+    pass
+
+  def __enter__(self) -> pathlib.Path:
+    return self.path
+
+  def __exit__(self, exc_type: Type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None) -> bool | None:
+    return True
+
+
+class PersistentTempDirFactory(TempDirFactory):
+
+  def __init__(self, path: pathlib.Path) -> None:
+    self.path = path
+
+  def get(self, name: str) -> PersistentTempDir:
+    temp_dir = tempfile.mkdtemp(prefix=f"{name}_", dir=self.path)
+    return PersistentTempDir(pathlib.Path(temp_dir))
+
+
+class EphemeralTempDir(TempDir):
+
+  def __init__(self, temp_dir: tempfile.TemporaryDirectory[str]) -> None:
+    self.temp_dir = temp_dir
+    self.path = pathlib.Path(temp_dir.name)
+
+  def cleanup(self) -> None:
+    self.temp_dir.cleanup()
+
+  def __enter__(self) -> pathlib.Path:
+    self.temp_dir.__enter__()
+    return self.path
+
+  def __exit__(self, exc_type: Type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None) -> bool | None:
+    self.temp_dir.__exit__(exc_type, exc_value, traceback)
+
+
+class EphemeralTempDirFactory(TempDirFactory):
+
+  def get(self, name: str) -> EphemeralTempDir:
+    temp_dir = tempfile.TemporaryDirectory(prefix=f"{name}_")
+    return EphemeralTempDir(temp_dir)
 
 
 def list_all(logger: logging.Logger) -> None:
@@ -130,6 +214,7 @@ def download(
   clang_format_version: str,
   download_dir: pathlib.Path,
   stop_after_verify: bool,
+  temp_dir_factory: TempDirFactory,
   logger: logging.Logger,
 ) -> None:
   logger.info("Downloading clang-format version %s", clang_format_version)
