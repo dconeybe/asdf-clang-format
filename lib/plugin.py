@@ -17,8 +17,31 @@ import tqdm
 
 def main() -> None:
   arg_parser = argparse.ArgumentParser()
-  arg_parser.add_argument("--log-level", default=None, choices=("info", "debug", "warning"))
   arg_parser.set_defaults(command=None)
+
+  log_level_arg = arg_parser.add_argument(
+    "--log-level",
+    default="info",
+    choices=("info", "debug", "warning"),
+    help="The level of log output to emit (default: %(default)s)",
+  )
+  arg_parser.add_argument(
+    "-v",
+    "--verbose",
+    action="store_const",
+    const="debug",
+    dest=log_level_arg.dest,
+    help=f"shorthand for {log_level_arg.option_strings[0]}=%(const)s",
+  )
+  arg_parser.add_argument(
+    "-q",
+    "--quiet",
+    action="store_const",
+    const="warning",
+    dest=log_level_arg.dest,
+    help=f"shorthand for {log_level_arg.option_strings[0]}=%(const)s",
+  )
+
   subparsers = arg_parser.add_subparsers()
 
   list_all_subparser = subparsers.add_parser("list-all")
@@ -28,7 +51,6 @@ def main() -> None:
   install_subparser.set_defaults(command="download")
   install_subparser.add_argument("--clang-format-version", required=True)
   install_subparser.add_argument("--download-dir", required=True)
-  install_subparser.add_argument("--llvm-release-keys-file", required=True)
 
   install_subparser = subparsers.add_parser("install")
   install_subparser.set_defaults(command="install")
@@ -62,11 +84,9 @@ def main() -> None:
     case "download":
       clang_format_version = parsed_args.clang_format_version
       download_dir = pathlib.Path(parsed_args.download_dir)
-      llvm_release_keys_file = pathlib.Path(parsed_args.llvm_release_keys_file)
       download(
         clang_format_version=clang_format_version,
         download_dir=download_dir,
-        llvm_release_keys_file=llvm_release_keys_file,
         logger=logger,
       )
     case "install":
@@ -92,7 +112,6 @@ def list_all(logger: logging.Logger) -> None:
 def download(
   clang_format_version: str,
   download_dir: pathlib.Path,
-  llvm_release_keys_file: pathlib.Path,
   logger: logging.Logger,
 ) -> None:
   logger.info("Downloading clang-format version %s", clang_format_version)
@@ -513,4 +532,8 @@ class DownloadedFileNotFoundError(Exception):
 
 
 if __name__ == "__main__":
-  main()
+  try:
+    main()
+  except KeyboardInterrupt:
+    print("ERROR: application terminated by keyboard interrupt", file=sys.stderr)
+    sys.exit(1)
