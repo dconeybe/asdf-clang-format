@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 
-readonly base_dir="$(dirname "$0")"
+set -euo pipefail
+
+readonly current_script_path="${BASH_SOURCE[0]}"
+readonly plugin_dir="$(dirname "$(dirname "$current_script_path")")/lib"
 
 readonly args=(
 	python
-	"$base_dir/plugin.py"
+	"$plugin_dir/plugin.py"
 	download
 	"--clang-format-version=$ASDF_INSTALL_VERSION"
 	"--download-dir=$ASDF_DOWNLOAD_PATH"
-	"--llvm-release-keys-file=$base_dir/release-keys.asc"
+	"--llvm-release-keys-file=$plugin_dir/release-keys.asc"
 )
 
 exec "${args[@]}"

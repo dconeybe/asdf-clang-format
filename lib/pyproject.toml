@@ -1,0 +1,47 @@
+[project]
+name = "asdf-clang-format"
+version = "1.0.0"
+requires-python = ">= 3.13"
+dependencies = [
+  "python-gnupg",
+  "requests",
+  "tqdm",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pyright",
+  "ruff",
+]
+
+[tool.pyright]
+include = ["**/*.py"]
+typeCheckingMode = "strict"
+
+[tool.ruff]
+line-length = 100
+indent-width = 2
+target-version = "py313"
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+docstring-code-format = true
+
+[tool.ruff.lint]
+extend-select = [
+  "UP",  # pyupgrade
+  "D",   # pydocstyle
+]
+ignore = [
+  "D100", # Missing docstring in public module
+  "D101", # Missing docstring in public class
+  "D102", # Missing docstring in public method
+  "D103", # Missing docstring in public function
+  "D106", # Missing docstring in public nested class
+  "D107", # Missing docstring in `__init__`
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"

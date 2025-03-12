@@ -1,0 +1,82 @@
+name: python
+
+on:
+  workflow_dispatch:
+    inputs:
+      pipToolsVersion:
+      pythonVersion:
+      ruffVersion:
+  pull_request:
+    paths:
+      - lib/**
+      - .github/workflows/python.yml
+  schedule:
+    - cron: '0 11 * * *' # Run nightly at 11am UTC (3am Pacific, 6am Eastern)
+
+env:
+  MDPBNTTT_PIP_TOOLS_VERSION: ${{ inputs.pythonVersion || '7.4.1' }}
+  MDPBNTTT_PYRIGHT_VERSION: ${{ inputs.pythonVersion || '1.1.396' }}
+  MDPBNTTT_PYTHON_VERSION: ${{ inputs.pythonVersion || '3.13' }}
+  MDPBNTTT_RUFF_VERSION: ${{ inputs.ruffVersion || '0.9.10' }}
+  NO_COLOR: 1
+
+defaults:
+  run:
+    shell: bash
+    working-directory: lib
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    continue-on-error: false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.MDPBNTTT_PYTHON_VERSION }}
+      - name: pip install
+        run: |
+          pip install pip-tools==${{ env.MDPBNTTT_PIP_TOOLS_VERSION }}
+          pip-compile --output-file=requirements.txt --strip-extras pyproject.toml
+          pip install -r requirements.txt
+          pip install ruff==${{ env.MDPBNTTT_RUFF_VERSION }}
+      - name: ruff format
+        run: ruff check --diff --output-format=github --no-cache --verbose
+
+  format:
+    continue-on-error: false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.MDPBNTTT_PYTHON_VERSION }}
+      - name: pip install
+        run: |
+          pip install pip-tools==${{ env.MDPBNTTT_PIP_TOOLS_VERSION }}
+          pip-compile --output-file=requirements.txt --strip-extras pyproject.toml
+          pip install -r requirements.txt
+          pip install ruff==${{ env.MDPBNTTT_RUFF_VERSION }}
+      - name: ruff format
+        run: ruff format --diff --no-cache --verbose
+
+  typecheck:
+    continue-on-error: false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.MDPBNTTT_PYTHON_VERSION }}
+      - name: pip install
+        run: |
+          pip install pip-tools==${{ env.MDPBNTTT_PIP_TOOLS_VERSION }}
+          pip-compile --output-file=requirements.txt --strip-extras pyproject.toml
+          pip install -r requirements.txt
+          pip install pyright==${{ env.MDPBNTTT_PYRIGHT_VERSION }}
+      - name: pyright
+        run: pyright --warnings --stats
