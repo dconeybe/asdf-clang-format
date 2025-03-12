@@ -130,26 +130,25 @@ def download(
   logger: logging.Logger,
 ) -> None:
   logger.info("Downloading clang-format version %s", clang_format_version)
-  asset_name_platform = llvm_release_asset_name_platform_component()
-  asset_name = "LLVM-" + clang_format_version + "-" + asset_name_platform + ".tar.xz"
+  artifact = get_llvm_github_artifact_for_current_platform(clang_format_version, logger)
 
   # Keep a hard reference to the TemporaryDirectory object so that it does not
   # get cleaned up until it is no longer needed.
   temporary_directory = tempfile.TemporaryDirectory()
   temp_dir = pathlib.Path(temporary_directory.name)
 
-  llvm_release = get_llvm_github_release(clang_format_version, logger)
-
+  signature_file_name = pathlib.PurePosixPath(artifact.signature_asset.name).name
   signature_downloader = AssetDownloader(
-    asset=asset_with_name(llvm_release.assets, asset_name + ".jsonl"),
-    dest_file=temp_dir / (asset_name + ".jsonl"),
+    asset=artifact.signature_asset,
+    dest_file=temp_dir / signature_file_name,
     logger=logger,
   )
   signature_downloader.download()
 
+  tarxz_file_name = pathlib.PurePosixPath(artifact.asset.name).name
   tarxz_downloader = AssetDownloader(
-    asset=asset_with_name(llvm_release.assets, asset_name),
-    dest_file=temp_dir / asset_name,
+    asset=artifact.asset,
+    dest_file=temp_dir / tarxz_file_name,
     signature_file=signature_downloader.dest_file,
     logger=logger,
   )
@@ -258,44 +257,23 @@ def get_llvm_github_release(version: str, logger: logging.Logger) -> GitHubRelea
       )
 
 
-def asset_with_name(assets: Sequence[GitHubReleaseAsset], name: str) -> GitHubReleaseAsset:
-  found_assets: list[GitHubReleaseAsset] = [asset for asset in assets if asset.name == name]
-  match len(found_assets):
-    case 0:
-      all_asset_names = ", ".join(sorted(asset.name for asset in assets))
-      raise AssetNotFoundError(
-        f"asset not found: {name} (existing asset names: {all_asset_names}) (error code pmc65927rm)"
-      )
-    case 1:
-      return found_assets[0]
-    case num_found_assets:
-      raise MultipleAssetsFoundError(
-        f"found {num_found_assets} assets with name {name}, "
-        "but expected exactly 1 (error code p7fta9kgv4)"
-      )
-
-
-def llvm_release_asset_name_platform_component() -> str:
-  uname_result = platform.uname()
-
-  match (uname_result.system.lower(), uname_result.machine.lower()):
-    case ("linux", "x86_64"):
-      return "Linux-X64"
-    case ("darwin", "arm64"):
-      return "macOS-ARM64"
-    case (unknown_system, unknown_machine):
-      raise UnsupportedPlatformError(
-        f"unsupported platform: system={unknown_system} machine={unknown_machine} "
-        "(error code fvwnvmtmav)"
-      )
-
-
 @dataclasses.dataclass(frozen=True)
 class LlvmReleaseArtifact:
   operating_system: str
   cpu_architecture: str
   asset: GitHubReleaseAsset
   signature_asset: GitHubReleaseAsset
+
+
+def get_llvm_github_artifact_for_current_platform(
+  version: str, logger: logging.Logger
+) -> LlvmReleaseArtifact:
+  release = get_llvm_github_release(version, logger)
+  artifacts = llvm_release_artifacts_from_llvm_github_release_assets(
+    llvm_version=release.version,
+    assets=release.assets,
+  )
+  return artifact_for_current_platform_from_llvm_release_artifacts(artifacts)
 
 
 def llvm_release_artifacts_from_llvm_github_release_assets(
@@ -411,6 +389,7 @@ def untar_single_file(
   )
 
   progress_bar_context_manager = tqdm.tqdm(
+    desc=f"Extracting {file_name}",
     total=estimated_num_entries,
     leave=False,
     unit=" files",
@@ -429,13 +408,17 @@ def untar_single_file(
       if tar_info_path.name != file_name:
         continue
 
+      progress_bar.clear()
       logger.info("Found %s in %s: %s", file_name, tarxz_file, tar_info.name)
+      progress_bar.refresh()
       matching_tar_infos.append(tar_info)
       if len(matching_tar_infos) > 1:
         continue  # The error will be reported later on.
 
       dest_file = dest_dir / tar_info.name
+      progress_bar.clear()
       logger.info("Extracting %s from %s to %s", tar_info.name, tarxz_file, dest_file)
+      progress_bar.refresh()
       tar_file.extract(tar_info, dest_dir, filter="data")
 
   match len(matching_tar_infos):
@@ -525,13 +508,14 @@ class AssetDownloader:
 
     dest_file.parent.mkdir(parents=True, exist_ok=True)
 
-    current_progress_bar_context_manager = tqdm.tqdm(
+    progress_bar_context_manager = tqdm.tqdm(
+      desc="Downloading",
       total=download_num_bytes,
       leave=False,
       unit=" bytes",
       dynamic_ncols=True,
     )
-    with current_progress_bar_context_manager as current_progress_bar:
+    with progress_bar_context_manager as progress_bar:
       with requests.get(download_url, stream=True) as response:
         response.raise_for_status()
         downloaded_num_bytes = 0
@@ -546,7 +530,7 @@ class AssetDownloader:
               )
 
             output_file.write(chunk)
-            current_progress_bar.update(len(chunk))
+            progress_bar.update(len(chunk))
 
         if downloaded_num_bytes != download_num_bytes:
           raise cls.TooFewBytesDownloadedError(
