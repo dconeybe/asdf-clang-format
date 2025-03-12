@@ -243,6 +243,8 @@ def llvm_release_asset_name_platform_component() -> str:
   match (uname_result.system.lower(), uname_result.machine.lower()):
     case ("linux", "x86_64"):
       return "Linux-X64"
+    case ("darwin", "arm64"):
+      return "macOS-ARM64"
     case (unknown_system, unknown_machine):
       raise UnsupportedPlatformError(
           f"unsupported platform: system={unknown_system} machine={unknown_machine} "
