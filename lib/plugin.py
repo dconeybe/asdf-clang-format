@@ -4,6 +4,7 @@ import dataclasses
 import logging
 import pathlib
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -104,9 +105,23 @@ def main() -> None:
 
 
 def list_all(logger: logging.Logger) -> None:
-  releases = get_llvm_releases(logger)
-  versions_str = " ".join(release.version for release in releases)
-  print(versions_str)
+  releases = get_llvm_github_releases(logger)
+
+  versions: list[str] = []
+  for release in releases:
+    artifacts = llvm_release_artifacts_from_llvm_github_release_assets(
+      llvm_version=release.version,
+      assets=release.assets,
+    )
+
+    try:
+      artifact_for_current_platform_from_llvm_release_artifacts(artifacts)
+    except (ArtifactNotFoundError, MultipleArtifactsFoundError):
+      continue
+
+    versions.append(release.version)
+
+  print(" ".join(versions))
 
 
 def download(
@@ -123,7 +138,7 @@ def download(
   temporary_directory = tempfile.TemporaryDirectory()
   temp_dir = pathlib.Path(temporary_directory.name)
 
-  llvm_release = get_llvm_release(clang_format_version, logger)
+  llvm_release = get_llvm_github_release(clang_format_version, logger)
 
   signature_downloader = AssetDownloader(
     asset=asset_with_name(llvm_release.assets, asset_name + ".jsonl"),
@@ -178,19 +193,19 @@ def install(
 
 
 @dataclasses.dataclass(frozen=True)
-class LlvmReleaseAsset:
+class GitHubReleaseAsset:
   name: str
   size: int
   download_url: str
 
 
 @dataclasses.dataclass(frozen=True)
-class LlvmReleaseInfo:
+class GitHubReleaseInfo:
   version: str
-  assets: Sequence[LlvmReleaseAsset]
+  assets: Sequence[GitHubReleaseAsset]
 
 
-def get_llvm_releases(logger: logging.Logger) -> list[LlvmReleaseInfo]:
+def get_llvm_github_releases(logger: logging.Logger) -> list[GitHubReleaseInfo]:
   url = "https://api.github.com/repos/llvm/llvm-project/releases"
   headers = {
     "Accept": "application/vnd.github+json",
@@ -202,30 +217,30 @@ def get_llvm_releases(logger: logging.Logger) -> list[LlvmReleaseInfo]:
   response.raise_for_status()
   releases = response.json()
 
-  llvm_release_infos: list[LlvmReleaseInfo] = []
+  llvm_release_infos: list[GitHubReleaseInfo] = []
   for release in releases:
     release_name = release["name"]
     version = release_name[5:]
 
-    llvm_release_assets: list[LlvmReleaseAsset] = []
+    llvm_release_assets: list[GitHubReleaseAsset] = []
     assets = release.get("assets", [])
     if assets:
       for asset in assets:
         llvm_release_assets.append(
-          LlvmReleaseAsset(
+          GitHubReleaseAsset(
             name=asset["name"],
             size=asset["size"],
             download_url=asset["browser_download_url"],
           )
         )
 
-    llvm_release_infos.append(LlvmReleaseInfo(version=version, assets=llvm_release_assets))
+    llvm_release_infos.append(GitHubReleaseInfo(version=version, assets=llvm_release_assets))
 
   return llvm_release_infos
 
 
-def get_llvm_release(version: str, logger: logging.Logger) -> LlvmReleaseInfo:
-  releases = get_llvm_releases(logger)
+def get_llvm_github_release(version: str, logger: logging.Logger) -> GitHubReleaseInfo:
+  releases = get_llvm_github_releases(logger)
   releases_with_desired_version = [release for release in releases if release.version == version]
 
   match len(releases_with_desired_version):
@@ -243,8 +258,8 @@ def get_llvm_release(version: str, logger: logging.Logger) -> LlvmReleaseInfo:
       )
 
 
-def asset_with_name(assets: Sequence[LlvmReleaseAsset], name: str) -> LlvmReleaseAsset:
-  found_assets: list[LlvmReleaseAsset] = [asset for asset in assets if asset.name == name]
+def asset_with_name(assets: Sequence[GitHubReleaseAsset], name: str) -> GitHubReleaseAsset:
+  found_assets: list[GitHubReleaseAsset] = [asset for asset in assets if asset.name == name]
   match len(found_assets):
     case 0:
       all_asset_names = ", ".join(sorted(asset.name for asset in assets))
@@ -271,6 +286,107 @@ def llvm_release_asset_name_platform_component() -> str:
     case (unknown_system, unknown_machine):
       raise UnsupportedPlatformError(
         f"unsupported platform: system={unknown_system} machine={unknown_machine} "
+        "(error code fvwnvmtmav)"
+      )
+
+
+@dataclasses.dataclass(frozen=True)
+class LlvmReleaseArtifact:
+  operating_system: str
+  cpu_architecture: str
+  asset: GitHubReleaseAsset
+  signature_asset: GitHubReleaseAsset
+
+
+def llvm_release_artifacts_from_llvm_github_release_assets(
+  llvm_version: str,
+  assets: Sequence[GitHubReleaseAsset],
+) -> list[LlvmReleaseArtifact]:
+  tarball_regex = re.compile(
+    re.escape(f"LLVM-{llvm_version}-") + r"(\w+)-(\w+)" + re.escape(".tar.xz")
+  )
+  signature_regex = re.compile(
+    re.escape(f"LLVM-{llvm_version}-") + r"(\w+)-(\w+)" + re.escape(".tar.xz.jsonl")
+  )
+
+  tarballs: dict[tuple[str, str], GitHubReleaseAsset] = {}
+  signatures: dict[tuple[str, str], GitHubReleaseAsset] = {}
+  for asset in assets:
+    tarball_match = tarball_regex.fullmatch(asset.name)
+    signature_match = signature_regex.fullmatch(asset.name)
+    if tarball_match is not None and signature_match is None:
+      dest_dict = tarballs
+      match = tarball_match
+    elif tarball_match is None and signature_match is not None:
+      dest_dict = signatures
+      match = signature_match
+    elif tarball_match is None and signature_match is None:
+      continue
+    else:
+      raise Exception(
+        "internal error e4bpy4jjmz: both tarball_match and signature_match are not None, "
+        "but at most one of them should be not None: "
+        f"tarball_match={tarball_match!r} signature_match={signature_match!r}"
+      )
+
+    os = match.group(1).lower()
+    arch = match.group(2).lower()
+    dest_dict[(os, arch)] = asset
+
+  artifacts: list[LlvmReleaseArtifact] = []
+  for key, tarball_asset in tarballs.items():
+    if (signature_asset := signatures.get(key)) is None:
+      # Ignore artifacts that lack a corresponding sigstore bundle,
+      # as without it the authenticity cannot be verified.
+      continue
+
+    artifacts.append(
+      LlvmReleaseArtifact(
+        operating_system=key[0],
+        cpu_architecture=key[1],
+        asset=tarball_asset,
+        signature_asset=signature_asset,
+      )
+    )
+
+  return artifacts
+
+
+def artifact_for_current_platform_from_llvm_release_artifacts(
+  artifacts: Sequence[LlvmReleaseArtifact],
+) -> LlvmReleaseArtifact:
+  platform = llvm_os_arch_for_current_platform()
+  matching_artifacts = [
+    artifact
+    for artifact in artifacts
+    if (artifact.operating_system, artifact.cpu_architecture) == platform
+  ]
+
+  match len(matching_artifacts):
+    case 0:
+      raise ArtifactNotFoundError(
+        f"no artifact found for current platform: {platform} (error code akkf4cpkep)"
+      )
+    case 1:
+      return matching_artifacts[0]
+    case num_matching_artifacts:
+      raise MultipleArtifactsFoundError(
+        f"{num_matching_artifacts} artifacts found for current platform {platform}, "
+        "but expected exactly 1 (error code g5d36np3ps)"
+      )
+
+
+def llvm_os_arch_for_current_platform() -> tuple[str, str]:
+  uname_result = platform.uname()
+
+  match (uname_result.system.lower(), uname_result.machine.lower()):
+    case ("linux", "x86_64"):
+      return ("linux", "x64")
+    case ("darwin", "arm64"):
+      return ("macos", "arm64")
+    case (unknown_system, unknown_machine):
+      raise UnsupportedPlatformError(
+        f"unknown platform: system={unknown_system} machine={unknown_machine} "
         "(error code fvwnvmtmav)"
       )
 
@@ -338,6 +454,14 @@ def untar_single_file(
       )
 
 
+class ArtifactNotFoundError(Exception):
+  pass
+
+
+class MultipleArtifactsFoundError(Exception):
+  pass
+
+
 class FileNotFoundInTarFileError(Exception):
   pass
 
@@ -349,7 +473,7 @@ class MultipleFilesFoundInTarFileError(Exception):
 class AssetDownloader:
   def __init__(
     self,
-    asset: LlvmReleaseAsset,
+    asset: GitHubReleaseAsset,
     dest_file: pathlib.Path,
     logger: logging.Logger,
     signature_file: pathlib.Path | None = None,
@@ -383,7 +507,7 @@ class AssetDownloader:
   @classmethod
   def _download(
     cls,
-    asset: LlvmReleaseAsset,
+    asset: GitHubReleaseAsset,
     dest_file: pathlib.Path,
     logger: logging.Logger,
   ) -> None:
