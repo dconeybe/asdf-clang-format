@@ -1,5 +1,7 @@
+import abc
 import argparse
 from collections.abc import Sequence
+import contextlib
 import dataclasses
 import logging
 import pathlib
@@ -10,6 +12,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from types import TracebackType
 import typing
 
 import requests
@@ -41,6 +44,12 @@ def main() -> None:
     const="warning",
     dest=log_level_arg.dest,
     help=f"shorthand for {log_level_arg.option_strings[0]}=%(const)s",
+  )
+  arg_parser.add_argument(
+    "--temp-dir",
+    default=None,
+    help="The directory to use as a temporary directory, instead of creating and deleting "
+    "ephemeral temporary directories (useful for debugging)",
   )
 
   subparsers = arg_parser.add_subparsers()
@@ -86,10 +95,16 @@ def main() -> None:
     case "download":
       clang_format_version = parsed_args.clang_format_version
       download_dir = pathlib.Path(parsed_args.download_dir)
+      match parsed_args.temp_dir:
+        case None:
+          temp_dir_factory = EphemeralTempDirFactory()
+        case temp_dir:
+          temp_dir_factory = PersistentTempDirFactory(pathlib.Path(temp_dir))
       download(
         clang_format_version=clang_format_version,
         download_dir=download_dir,
         stop_after_verify=parsed_args.stop_after_verify,
+        temp_dir_factory=temp_dir_factory,
         logger=logger,
       )
     case "install":
@@ -104,6 +119,111 @@ def main() -> None:
       )
     case unknown_command:
       raise Exception(f"internal error ysnynaqa84: unknown command: {unknown_command}")
+
+
+class TempDir(contextlib.AbstractContextManager[pathlib.Path]):
+  @property
+  @abc.abstractmethod
+  def path(self) -> pathlib.Path: ...
+
+  @abc.abstractmethod
+  def cleanup(self) -> None: ...
+
+  def subdir(self, name: str) -> pathlib.Path:
+    scrubbed_name = scrubbed_file_name(name)
+    temp_sub_dir = tempfile.mkdtemp(prefix=f"{scrubbed_name}_", dir=self.path)
+    return pathlib.Path(temp_sub_dir)
+
+
+class TempDirFactory(typing.Protocol):
+  def get(self, name: str) -> TempDir: ...
+
+
+class PersistentTempDir(TempDir):
+  def __init__(self, path: pathlib.Path) -> None:
+    self._path = path
+
+  @property
+  @typing.override
+  def path(self) -> pathlib.Path:
+    return self._path
+
+  @typing.override
+  def cleanup(self) -> None:
+    # Do nothing on cleanup; we are a "persistent" temporary directory after all.
+    pass
+
+  def __str__(self) -> str:
+    return self.path.__str__()
+
+  def __repr__(self) -> str:
+    return f"PersistentTempDir({self.path!r})"
+
+  @typing.override
+  def __enter__(self) -> pathlib.Path:
+    return self.path
+
+  @typing.override
+  def __exit__(
+    self,
+    exc_type: type[BaseException] | None,
+    exc_value: BaseException | None,
+    traceback: TracebackType | None,
+  ) -> bool | None:
+    pass
+
+
+class PersistentTempDirFactory(TempDirFactory):
+  def __init__(self, path: pathlib.Path) -> None:
+    self.path = path
+
+  def get(self, name: str) -> PersistentTempDir:
+    scrubbed_name = scrubbed_file_name(name)
+    self.path.mkdir(parents=True, exist_ok=True)
+    temp_dir = tempfile.mkdtemp(prefix=f"{scrubbed_name}_", dir=self.path)
+    return PersistentTempDir(pathlib.Path(temp_dir))
+
+
+class EphemeralTempDir(TempDir):
+  def __init__(self, temp_dir: tempfile.TemporaryDirectory[str]) -> None:
+    self.temp_dir = temp_dir
+    self._path = pathlib.Path(temp_dir.name)
+
+  @property
+  @typing.override
+  def path(self) -> pathlib.Path:
+    return self._path
+
+  @typing.override
+  def cleanup(self) -> None:
+    self.temp_dir.cleanup()
+
+  def __str__(self) -> str:
+    return self.temp_dir.__str__()
+
+  def __repr__(self) -> str:
+    return f"EphemeralTempDir({self.temp_dir!r})"
+
+  @typing.override
+  def __enter__(self) -> pathlib.Path:
+    self.temp_dir.__enter__()
+    return self.path
+
+  @typing.override
+  def __exit__(
+    self,
+    exc_type: type[BaseException] | None,
+    exc_value: BaseException | None,
+    traceback: TracebackType | None,
+  ) -> bool | None:
+    return self.temp_dir.__exit__(exc_type, exc_value, traceback)
+
+
+class EphemeralTempDirFactory(TempDirFactory):
+  def get(self, name: str) -> EphemeralTempDir:
+    scrubbed_name = scrubbed_file_name(name)
+    temp_dir = tempfile.TemporaryDirectory(prefix=f"{scrubbed_name}_")
+    return EphemeralTempDir(temp_dir)
 
 
 def list_all(logger: logging.Logger) -> None:
@@ -130,20 +250,19 @@ def download(
   clang_format_version: str,
   download_dir: pathlib.Path,
   stop_after_verify: bool,
+  temp_dir_factory: TempDirFactory,
   logger: logging.Logger,
 ) -> None:
+  print(f"zzyzx {temp_dir_factory!r}")
   logger.info("Downloading clang-format version %s", clang_format_version)
   artifact = get_llvm_github_artifact_for_current_platform(clang_format_version, logger)
 
-  # Keep a hard reference to the TemporaryDirectory object so that it does not
-  # get cleaned up until it is no longer needed.
-  temporary_directory = tempfile.TemporaryDirectory()
-  temp_dir = pathlib.Path(temporary_directory.name)
+  temp_dir = temp_dir_factory.get(f"v{clang_format_version}")
 
   signature_file_name = pathlib.PurePosixPath(artifact.signature_asset.name).name
   signature_downloader = AssetDownloader(
     asset=artifact.signature_asset,
-    dest_file=temp_dir / signature_file_name,
+    dest_file=temp_dir.path / signature_file_name,
     logger=logger,
   )
   signature_downloader.download()
@@ -151,7 +270,7 @@ def download(
   tarxz_file_name = pathlib.PurePosixPath(artifact.asset.name).name
   tarxz_downloader = AssetDownloader(
     asset=artifact.asset,
-    dest_file=temp_dir / tarxz_file_name,
+    dest_file=temp_dir.path / tarxz_file_name,
     signature_file=signature_downloader.dest_file,
     logger=logger,
   )
@@ -163,7 +282,7 @@ def download(
 
   downloaded_clang_format_file = untar_single_file(
     tarxz_file=tarxz_downloader.dest_file,
-    dest_dir=pathlib.Path(tempfile.mkdtemp(dir=temp_dir)),
+    dest_dir=temp_dir.subdir("clang_format_bin"),
     file_name="clang-format",
     estimated_num_entries=11000,
     logger=logger,
@@ -196,6 +315,10 @@ def install(
 
   dest_file.parent.mkdir(parents=True, exist_ok=True)
   shutil.copy2(src_file, dest_file)
+
+
+def scrubbed_file_name(s: str) -> str:
+  return "".join(c if c.isalnum() or c.isidentifier() else "_" for c in s)
 
 
 @dataclasses.dataclass(frozen=True)
