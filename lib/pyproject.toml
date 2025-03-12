@@ -10,21 +10,38 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-  "pyink",
   "pyright",
+  "ruff",
 ]
 
 [tool.pyright]
-include = ["plugin.py"]
+include = ["**/*.py"]
 typeCheckingMode = "strict"
 
-[tool.pyink]
+[tool.ruff]
 line-length = 100
-pyink-indentation = 2
+indent-width = 2
+target-version = "py313"
 
-[tool.flake8]
-indent-size = 2
-max-line-length = 100
-exclude = ["__pycache__"]
-doctests = true
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+docstring-code-format = true
 
+[tool.ruff.lint]
+extend-select = [
+  "UP",  # pyupgrade
+  "D",   # pydocstyle
+]
+ignore = [
+  "D100", # Missing docstring in public module
+  "D101", # Missing docstring in public class
+  "D102", # Missing docstring in public method
+  "D103", # Missing docstring in public function
+  "D106", # Missing docstring in public nested class
+  "D107", # Missing docstring in `__init__`
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"

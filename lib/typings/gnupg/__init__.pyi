@@ -1,4 +1,5 @@
-from typing import Any, BinaryIO, Mapping, Protocol, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any, BinaryIO, Protocol
 
 class Verify(Protocol):
   stderr: str | None

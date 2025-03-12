@@ -62,18 +62,18 @@ def main() -> None:
       download_dir = pathlib.Path(parsed_args.download_dir)
       llvm_release_keys_file = pathlib.Path(parsed_args.llvm_release_keys_file)
       download(
-          clang_format_version=clang_format_version,
-          download_dir=download_dir,
-          llvm_release_keys_file=llvm_release_keys_file,
+        clang_format_version=clang_format_version,
+        download_dir=download_dir,
+        llvm_release_keys_file=llvm_release_keys_file,
       )
     case "install":
       clang_format_version = parsed_args.clang_format_version
       download_dir = pathlib.Path(parsed_args.download_dir)
       install_dir = pathlib.Path(parsed_args.install_dir)
       install(
-          clang_format_version=clang_format_version,
-          download_dir=download_dir,
-          install_dir=install_dir,
+        clang_format_version=clang_format_version,
+        download_dir=download_dir,
+        install_dir=install_dir,
       )
     case unknown_command:
       raise Exception(f"internal error ysnynaqa84: unknown command: {unknown_command}")
@@ -86,9 +86,9 @@ def list_all() -> None:
 
 
 def download(
-    clang_format_version: str,
-    download_dir: pathlib.Path,
-    llvm_release_keys_file: pathlib.Path,
+  clang_format_version: str,
+  download_dir: pathlib.Path,
+  llvm_release_keys_file: pathlib.Path,
 ) -> None:
   logging.info("Downloading clang-format version %s", clang_format_version)
   asset_name_platform = llvm_release_asset_name_platform_component()
@@ -102,40 +102,40 @@ def download(
   llvm_release = get_llvm_release(clang_format_version)
 
   signature_downloader = AssetDownloader(
-      asset=asset_with_name(llvm_release.assets, asset_name + ".sig"),
-      dest_file=temp_dir / (asset_name + ".sig"),
+    asset=asset_with_name(llvm_release.assets, asset_name + ".sig"),
+    dest_file=temp_dir / (asset_name + ".sig"),
   )
   signature_downloader.download()
 
   tarxz_downloader = AssetDownloader(
-      asset=asset_with_name(llvm_release.assets, asset_name),
-      dest_file=temp_dir / asset_name,
-      signature_file=signature_downloader.dest_file,
-      public_keys_file=llvm_release_keys_file,
+    asset=asset_with_name(llvm_release.assets, asset_name),
+    dest_file=temp_dir / asset_name,
+    signature_file=signature_downloader.dest_file,
+    public_keys_file=llvm_release_keys_file,
   )
   tarxz_downloader.download_and_verify_pgp_signature()
 
   downloaded_clang_format_file = untar_single_file(
-      tarxz_file=tarxz_downloader.dest_file,
-      dest_dir=pathlib.Path(tempfile.mkdtemp(dir=temp_dir)),
-      file_name="clang-format",
-      estimated_num_entries=11000,
+    tarxz_file=tarxz_downloader.dest_file,
+    dest_dir=pathlib.Path(tempfile.mkdtemp(dir=temp_dir)),
+    file_name="clang-format",
+    estimated_num_entries=11000,
   )
 
   installed_clang_format_file = download_dir / "clang-format"
   logging.info(
-      "Moving %s to %s",
-      downloaded_clang_format_file,
-      installed_clang_format_file,
+    "Moving %s to %s",
+    downloaded_clang_format_file,
+    installed_clang_format_file,
   )
   installed_clang_format_file.parent.mkdir(parents=True, exist_ok=True)
   shutil.move(downloaded_clang_format_file, installed_clang_format_file)
 
 
 def install(
-    clang_format_version: str,
-    download_dir: pathlib.Path,
-    install_dir: pathlib.Path,
+  clang_format_version: str,
+  download_dir: pathlib.Path,
+  install_dir: pathlib.Path,
 ) -> None:
   logging.info("Installing clang-format version %s", clang_format_version)
 
@@ -166,8 +166,8 @@ class LlvmReleaseInfo:
 def get_llvm_releases() -> list[LlvmReleaseInfo]:
   url = "https://api.github.com/repos/llvm/llvm-project/releases"
   headers = {
-      "Accept": "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
+    "Accept": "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
   }
   logging.info("Getting releases from %s", url)
 
@@ -185,11 +185,11 @@ def get_llvm_releases() -> list[LlvmReleaseInfo]:
     if assets:
       for asset in assets:
         llvm_release_assets.append(
-            LlvmReleaseAsset(
-                name=asset["name"],
-                size=asset["size"],
-                download_url=asset["browser_download_url"],
-            )
+          LlvmReleaseAsset(
+            name=asset["name"],
+            size=asset["size"],
+            download_url=asset["browser_download_url"],
+          )
         )
 
     llvm_release_infos.append(LlvmReleaseInfo(version=version, assets=llvm_release_assets))
@@ -204,15 +204,15 @@ def get_llvm_release(version: str) -> LlvmReleaseInfo:
   match len(releases_with_desired_version):
     case 0:
       raise ClangFormatVersionNotFoundError(
-          f"clang-format version not found: {version} (error code bef3e5b3ap)"
+        f"clang-format version not found: {version} (error code bef3e5b3ap)"
       )
     case 1:
       return releases_with_desired_version[0]
     case num_versions_found:
       raise MultipleClangFormatVersionsFoundError(
-          f"{num_versions_found} clang-format versions found "
-          f"for version {version}, but expected exactly 1 "
-          "(error code gcn7ebjkj3)"
+        f"{num_versions_found} clang-format versions found "
+        f"for version {version}, but expected exactly 1 "
+        "(error code gcn7ebjkj3)"
       )
 
 
@@ -222,16 +222,14 @@ def asset_with_name(assets: Sequence[LlvmReleaseAsset], name: str) -> LlvmReleas
     case 0:
       all_asset_names = ", ".join(sorted(asset.name for asset in assets))
       raise AssetNotFoundError(
-          f"asset not found: {name} "
-          f"(existing asset names: {all_asset_names}) "
-          "(error code pmc65927rm)"
+        f"asset not found: {name} (existing asset names: {all_asset_names}) (error code pmc65927rm)"
       )
     case 1:
       return found_assets[0]
     case num_found_assets:
       raise MultipleAssetsFoundError(
-          f"found {num_found_assets} assets with name {name}, "
-          "but expected exactly 1 (error code p7fta9kgv4)"
+        f"found {num_found_assets} assets with name {name}, "
+        "but expected exactly 1 (error code p7fta9kgv4)"
       )
 
 
@@ -245,16 +243,16 @@ def llvm_release_asset_name_platform_component() -> str:
       return "macOS-ARM64"
     case (unknown_system, unknown_machine):
       raise UnsupportedPlatformError(
-          f"unsupported platform: system={unknown_system} machine={unknown_machine} "
-          "(error code fvwnvmtmav)"
+        f"unsupported platform: system={unknown_system} machine={unknown_machine} "
+        "(error code fvwnvmtmav)"
       )
 
 
 def untar_single_file(
-    tarxz_file: pathlib.Path,
-    dest_dir: pathlib.Path,
-    file_name: str,
-    estimated_num_entries: int,
+  tarxz_file: pathlib.Path,
+  dest_dir: pathlib.Path,
+  file_name: str,
+  estimated_num_entries: int,
 ) -> pathlib.Path:
   logging.info("Extracting %s from %s to %s", file_name, tarxz_file, dest_dir)
 
@@ -264,15 +262,15 @@ def untar_single_file(
   # at the time of writing, it doesn't recognize these "streaming" modes, but only
   # the basic modes, like "r:xz".
   tar_file = tarfile.open(  # pyright: ignore[reportUnknownVariableType,reportCallIssue]
-      tarxz_file,
-      "r|xz",  # pyright: ignore[reportArgumentType]
+    tarxz_file,
+    "r|xz",  # pyright: ignore[reportArgumentType]
   )
 
   progress_bar_context_manager = tqdm.tqdm(
-      total=estimated_num_entries,
-      leave=False,
-      unit=" files",
-      dynamic_ncols=True,
+    total=estimated_num_entries,
+    leave=False,
+    unit=" files",
+    dynamic_ncols=True,
   )
 
   tar_file = typing.cast(tarfile.TarFile, tar_file)
@@ -299,7 +297,7 @@ def untar_single_file(
   match len(matching_tar_infos):
     case 0:
       raise FileNotFoundInTarFileError(
-          f"no file named {file_name} found in tar file: {tarxz_file} (error code j9ebr9gyhb)"
+        f"no file named {file_name} found in tar file: {tarxz_file} (error code j9ebr9gyhb)"
       )
     case 1:
       # It is safe to ignore the pyright typing error below as this code path can _only_ be
@@ -307,8 +305,8 @@ def untar_single_file(
       return dest_file  # pyright: ignore[reportPossiblyUnboundVariable]
     case num_files_found:
       raise MultipleFilesFoundInTarFileError(
-          f"{num_files_found} files named {file_name} found in tar file {tarxz_file}, "
-          "but expected exactly 1 (error code cstaaxdsn9)"
+        f"{num_files_found} files named {file_name} found in tar file {tarxz_file}, "
+        "but expected exactly 1 (error code cstaaxdsn9)"
       )
 
 
@@ -321,13 +319,12 @@ class MultipleFilesFoundInTarFileError(Exception):
 
 
 class AssetDownloader:
-
   def __init__(
-      self,
-      asset: LlvmReleaseAsset,
-      dest_file: pathlib.Path,
-      signature_file: pathlib.Path | None = None,
-      public_keys_file: pathlib.Path | None = None,
+    self,
+    asset: LlvmReleaseAsset,
+    dest_file: pathlib.Path,
+    signature_file: pathlib.Path | None = None,
+    public_keys_file: pathlib.Path | None = None,
   ) -> None:
     self.asset = asset
     self.dest_file = dest_file
@@ -350,9 +347,9 @@ class AssetDownloader:
       raise ValueError("cannot verify PGP signature because self.signature_file is None")
 
     self._verify_pgp_signature(
-        file_to_verify=file_to_verify,
-        signature_file=signature_file,
-        public_keys_file=public_keys_file,
+      file_to_verify=file_to_verify,
+      signature_file=signature_file,
+      public_keys_file=public_keys_file,
     )
 
   @classmethod
@@ -361,10 +358,10 @@ class AssetDownloader:
     download_num_bytes = asset.size
 
     logging.info(
-        "Downloading %s (%s bytes) to %s",
-        download_url,
-        f"{download_num_bytes:,}",
-        dest_file,
+      "Downloading %s (%s bytes) to %s",
+      download_url,
+      f"{download_num_bytes:,}",
+      dest_file,
     )
     if download_num_bytes < 0:
       raise Exception(f"invalid download_num_bytes: {download_num_bytes:,} (error code px5e9pqbaz)")
@@ -372,10 +369,10 @@ class AssetDownloader:
     dest_file.parent.mkdir(parents=True, exist_ok=True)
 
     current_progress_bar_context_manager = tqdm.tqdm(
-        total=download_num_bytes,
-        leave=False,
-        unit=" bytes",
-        dynamic_ncols=True,
+      total=download_num_bytes,
+      leave=False,
+      unit=" bytes",
+      dynamic_ncols=True,
     )
     with current_progress_bar_context_manager as current_progress_bar:
       with requests.get(download_url, stream=True) as response:
@@ -386,9 +383,9 @@ class AssetDownloader:
             downloaded_num_bytes += len(chunk)
             if downloaded_num_bytes > download_num_bytes:
               raise cls.TooManyBytesDownloadedError(
-                  f"Downloaded {downloaded_num_bytes:,} bytes from {download_url}, "
-                  f"which is {downloaded_num_bytes - download_num_bytes:,} bytes more "
-                  f"than expected ({download_num_bytes:,}) (error code cv7fp9jb2e)"
+                f"Downloaded {downloaded_num_bytes:,} bytes from {download_url}, "
+                f"which is {downloaded_num_bytes - download_num_bytes:,} bytes more "
+                f"than expected ({download_num_bytes:,}) (error code cv7fp9jb2e)"
               )
 
             output_file.write(chunk)
@@ -396,22 +393,22 @@ class AssetDownloader:
 
         if downloaded_num_bytes != download_num_bytes:
           raise cls.TooFewBytesDownloadedError(
-              f"Downloaded {downloaded_num_bytes:,} bytes from {download_url}, "
-              f"which is {download_num_bytes - downloaded_num_bytes:,} bytes fewer "
-              f"than expected ({download_num_bytes:,}) (error code rf4n374kdm)"
+            f"Downloaded {downloaded_num_bytes:,} bytes from {download_url}, "
+            f"which is {download_num_bytes - downloaded_num_bytes:,} bytes fewer "
+            f"than expected ({download_num_bytes:,}) (error code rf4n374kdm)"
           )
 
   @classmethod
   def _verify_pgp_signature(
-      cls,
-      file_to_verify: pathlib.Path,
-      signature_file: pathlib.Path,
-      public_keys_file: pathlib.Path | None,
+    cls,
+    file_to_verify: pathlib.Path,
+    signature_file: pathlib.Path,
+    public_keys_file: pathlib.Path | None,
   ) -> None:
     logging.info(
-        "Verifying signature of file %s using signature from file %s",
-        file_to_verify,
-        signature_file,
+      "Verifying signature of file %s using signature from file %s",
+      file_to_verify,
+      signature_file,
     )
     with tempfile.TemporaryDirectory() as temp_gnupg_home_dir:
       gpg = gnupg.GPG(gnupghome=temp_gnupg_home_dir)
@@ -426,10 +423,10 @@ class AssetDownloader:
       if verified.stderr:
         logging.warning("gnupg error output: %s", verified.stderr)
       statuses = ", ".join(
-          str(problem["status"]) for problem in verified.problems if "status" in problem
+        str(problem["status"]) for problem in verified.problems if "status" in problem
       )
       raise cls.SignatureVerificationError(
-          f"Verifying PGP signature of {file_to_verify} failed: {statuses}"
+        f"Verifying PGP signature of {file_to_verify} failed: {statuses}"
       )
 
   class TooManyBytesDownloadedError(Exception):
