@@ -715,6 +715,7 @@ class AssetDownloader:
       stdout = output_file
       stderr = subprocess.STDOUT
 
+    logging.info("Running command: {subprocess.list2cmdline(sigstore_args)}")
     sigstore_completed_process = subprocess.run(
       sigstore_args,
       stdout=stdout,
@@ -731,7 +732,9 @@ class AssetDownloader:
           logger.warning(stdout_text)
 
       raise cls.SignatureVerificationError(
-        f"Verifying sigstore signature of {file_to_verify} failed"
+        f"Verifying sigstore signature of {file_to_verify} failed: "
+        f"command completed with non-zero exit code {sigstore_completed_process.returncode}: "
+        + subprocess.list2cmdline(sigstore_args)
       )
 
   class TooManyBytesDownloadedError(Exception):
