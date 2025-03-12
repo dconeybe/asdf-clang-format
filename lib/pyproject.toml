@@ -1,4 +1,6 @@
 [project]
+name = "asdf-clang-format"
+version = "1.0.0"
 requires-python = ">= 3.13"
 dependencies = [
 	"python-gnupg",
@@ -25,5 +27,4 @@ indent-size = 2
 max-line-length = 100
 exclude = ["__pycache__"]
 doctests = true
-
 

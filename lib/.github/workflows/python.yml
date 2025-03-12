@@ -1,0 +1,79 @@
+name: python
+
+on:
+  workflow_dispatch:
+    inputs:
+      pythonVersion:
+  pull_request:
+    paths:
+      - lib/**
+      - .github/workflows/python.yml
+  schedule:
+    - cron: '0 11 * * *' # Run nightly at 11am UTC (3am Pacific, 6am Eastern)
+
+env:
+  MDPBNTTT_PYTHON_VERSION: ${{ inputs.pythonVersion || '3.13' }}
+
+defaults:
+  run:
+    shell: bash
+    working-directory: lib
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pyink:
+    name: pyink (code format)
+    continue-on-error: false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.MDPBNTTT_PYTHON_VERSION }}
+      - name: pip install
+        run: |
+          pip install pip-tools==7.4.1
+          pip-compile --output-file=requirements.txt --strip-extras pyproject.toml
+          pip install -r requirements.txt
+          pip install pyink==24.10.1
+      - name: pyink
+        run: pyink --check --diff --verbose --no-color .
+
+  pyright:
+    name: pyright (type annotation check)
+    continue-on-error: false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.XONSHLIB_PYTHON_VERSION }}
+      - name: pip install
+        run: |
+          pip install pip-tools==7.4.1
+          pip-compile --output-file=requirements.txt --strip-extras pyproject.toml
+          pip install -r requirements.txt
+          pip install pyright==1.1.396
+      - name: pyright
+        run: pyright --warnings --stats
+
+  flake8:
+    name: flake8 (code linter)
+    continue-on-error: false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.XONSHLIB_PYTHON_VERSION }}
+      - name: pip install
+        run: |
+          pip install pip-tools==7.4.1
+          pip-compile --output-file=requirements.txt --strip-extras pyproject.toml
+          pip install -r requirements.txt
+          pip install flake8==7.1.2
+      - name: flake8
+        run: flake8 --verbose --color=never --count --show-source --doctests
