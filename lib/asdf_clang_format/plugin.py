@@ -77,45 +77,48 @@ def download(
   logger.info("Downloading clang-format version %s", clang_format_version)
   artifact = get_llvm_github_artifact_for_current_platform(clang_format_version, logger)
 
-  temp_dir = temp_dir_factory.get(f"v{clang_format_version}")
+  temp_dir = temp_dir_factory.get(f"download_{clang_format_version}")
 
-  signature_file_name = pathlib.PurePosixPath(artifact.signature_asset.name).name
-  signature_downloader = AssetDownloader(
+  bundle_file_name = pathlib.PurePosixPath(artifact.signature_asset.name).name
+  bundle_file = temp_dir.path / bundle_file_name
+  bundle_url = download_github_release_asset(
     asset=artifact.signature_asset,
-    dest_file=temp_dir.path / signature_file_name,
+    dest_file=bundle_file,
     logger=logger,
   )
-  signature_downloader.download()
 
   tarxz_file_name = pathlib.PurePosixPath(artifact.asset.name).name
-  tarxz_downloader = AssetDownloader(
+  tarxz_file = temp_dir.path / tarxz_file_name
+  tarxz_url = download_github_release_asset(
     asset=artifact.asset,
-    dest_file=temp_dir.path / tarxz_file_name,
-    signature_file=signature_downloader.dest_file,
+    dest_file=tarxz_file,
     logger=logger,
   )
-  tarxz_downloader.download()
 
   if stop_after == DownloadCommand.StopAfter.DOWNLOAD:
     logging.info(
       "As requested, stopping after downloading %s to %s and %s to %s",
-      signature_downloader.asset.download_url,
-      signature_downloader.dest_file,
-      tarxz_downloader.asset.download_url,
-      tarxz_downloader.dest_file,
+      bundle_url,
+      bundle_file,
+      tarxz_url,
+      tarxz_file,
     )
     return
 
-  tarxz_downloader.verify_sigstore_signature(clang_format_version)
+  verify_sigstore_signature(
+    file_to_verify=tarxz_file,
+    bundle_file=bundle_file,
+    logger=logger,
+  )
 
   if stop_after == DownloadCommand.StopAfter.VERIFY:
     logging.info(
       "As requested, stopping after verifying signature of %s (downloaded from %s) "
       "using signing info from %s (downloaded from %s)",
-      tarxz_downloader.dest_file,
-      tarxz_downloader.asset.download_url,
-      signature_downloader.dest_file,
-      signature_downloader.asset.download_url,
+      tarxz_file,
+      tarxz_url,
+      bundle_file,
+      bundle_url,
     )
     return
 
@@ -125,7 +128,7 @@ def download(
   typing.assert_type(stop_after, None)
 
   downloaded_clang_format_file = untar_single_file(
-    tarxz_file=tarxz_downloader.dest_file,
+    tarxz_file=tarxz_file,
     dest_dir=temp_dir.subdir("clang_format_bin"),
     file_name="clang-format",
     estimated_num_entries=11000,
@@ -423,165 +426,130 @@ class MultipleFilesFoundInTarFileError(Exception):
   pass
 
 
-class AssetDownloader:
-  def __init__(
-    self,
-    asset: GitHubReleaseAsset,
-    dest_file: pathlib.Path,
-    logger: logging.Logger,
-    signature_file: pathlib.Path | None = None,
-  ) -> None:
-    self.asset = asset
-    self.dest_file = dest_file
-    self.signature_file = signature_file
-    self.logger = logger
+def verify_sigstore_signature(
+  file_to_verify: pathlib.Path,
+  bundle_file: pathlib.Path,
+  logger: logging.Logger,
+) -> None:
+  logger.info(
+    "Verifying signature of file %s using sigstore bundle from file %s",
+    file_to_verify,
+    bundle_file,
+  )
 
-  def download(self) -> None:
-    self._download(self.asset, self.dest_file, self.logger)
+  sigstore_args: list[str] = [
+    sys.executable,
+    "-m",
+    "sigstore",
+    "verify",
+    "github",
+    "--bundle",
+    str(bundle_file),
+    "--repository",
+    "llvm/llvm-project",
+    str(file_to_verify),
+  ]
 
-  def verify_sigstore_signature(self, llvm_version: str) -> None:
-    file_to_verify = self.dest_file
-    signature_file = self.signature_file
+  if logger.isEnabledFor(logging.DEBUG):
+    sigstore_args.append("--verbose")
+    output_file = None
+    stdout = None
+    stderr = None
+  elif logger.isEnabledFor(logging.INFO):
+    output_file = None
+    stdout = None
+    stderr = None
+  else:
+    output_file = tempfile.TemporaryFile()
+    stdout = output_file
+    stderr = subprocess.STDOUT
 
-    if signature_file is None:
-      raise ValueError("cannot verify sigstore signature because self.signature_file is None")
+  logging.info("Running command: {subprocess.list2cmdline(sigstore_args)}")
+  sigstore_completed_process = subprocess.run(
+    sigstore_args,
+    stdout=stdout,
+    stderr=stderr,
+  )
 
-    self._verify_sigstore_signature(
-      llvm_version=llvm_version,
-      file_to_verify=file_to_verify,
-      signature_file=signature_file,
-      logger=self.logger,
+  if sigstore_completed_process.returncode != 0:
+    if output_file is not None:
+      output_file.seek(0)
+      # Limit the number of bytes read to avoid unbounded memory usage.
+      stdout_bytes = output_file.read(131072)
+      stdout_text = stdout_bytes.decode("utf8", errors="replace").strip()
+      if stdout_text:
+        logger.warning(stdout_text)
+
+    raise SignatureVerificationError(
+      f"Verifying sigstore signature of {file_to_verify} failed: "
+      f"command completed with non-zero exit code {sigstore_completed_process.returncode}: "
+      + subprocess.list2cmdline(sigstore_args)
     )
 
-  @classmethod
-  def _download(
-    cls,
-    asset: GitHubReleaseAsset,
-    dest_file: pathlib.Path,
-    logger: logging.Logger,
-  ) -> None:
-    download_url = asset.download_url
-    download_num_bytes = asset.size
 
-    logger.info(
-      "Downloading %s (%s bytes) to %s",
-      download_url,
-      f"{download_num_bytes:,}",
-      dest_file,
-    )
-    if download_num_bytes < 0:
-      raise Exception(f"invalid download_num_bytes: {download_num_bytes:,} (error code px5e9pqbaz)")
+def download_github_release_asset(
+  asset: GitHubReleaseAsset,
+  dest_file: pathlib.Path,
+  logger: logging.Logger,
+) -> str:
+  download_url = asset.download_url
+  download_num_bytes = asset.size
 
-    dest_file.parent.mkdir(parents=True, exist_ok=True)
+  logger.info(
+    "Downloading %s (%s bytes) to %s",
+    download_url,
+    f"{download_num_bytes:,}",
+    dest_file,
+  )
+  if download_num_bytes < 0:
+    raise Exception(f"invalid download_num_bytes: {download_num_bytes:,} (error code px5e9pqbaz)")
 
-    progress_bar_context_manager = tqdm.tqdm(
-      desc="Downloading",
-      total=download_num_bytes,
-      leave=False,
-      unit=" bytes",
-      dynamic_ncols=True,
-    )
-    with progress_bar_context_manager as progress_bar:
-      with requests.get(download_url, stream=True) as response:
-        response.raise_for_status()
-        downloaded_num_bytes = 0
-        with dest_file.open("wb") as output_file:
-          for chunk in response.iter_content(chunk_size=65536):
-            downloaded_num_bytes += len(chunk)
-            if downloaded_num_bytes > download_num_bytes:
-              raise cls.TooManyBytesDownloadedError(
-                f"Downloaded {downloaded_num_bytes:,} bytes from {download_url}, "
-                f"which is {downloaded_num_bytes - download_num_bytes:,} bytes more "
-                f"than expected ({download_num_bytes:,}) (error code cv7fp9jb2e)"
-              )
+  dest_file.parent.mkdir(parents=True, exist_ok=True)
 
-            output_file.write(chunk)
-            progress_bar.update(len(chunk))
+  progress_bar_context_manager = tqdm.tqdm(
+    desc="Downloading",
+    total=download_num_bytes,
+    leave=False,
+    unit=" bytes",
+    dynamic_ncols=True,
+  )
+  with progress_bar_context_manager as progress_bar:
+    with requests.get(download_url, stream=True) as response:
+      response.raise_for_status()
+      downloaded_num_bytes = 0
+      with dest_file.open("wb") as output_file:
+        for chunk in response.iter_content(chunk_size=65536):
+          downloaded_num_bytes += len(chunk)
+          if downloaded_num_bytes > download_num_bytes:
+            raise TooManyBytesDownloadedError(
+              f"Downloaded {downloaded_num_bytes:,} bytes from {download_url}, "
+              f"which is {downloaded_num_bytes - download_num_bytes:,} bytes more "
+              f"than expected ({download_num_bytes:,}) (error code cv7fp9jb2e)"
+            )
 
-        if downloaded_num_bytes != download_num_bytes:
-          raise cls.TooFewBytesDownloadedError(
-            f"Downloaded {downloaded_num_bytes:,} bytes from {download_url}, "
-            f"which is {download_num_bytes - downloaded_num_bytes:,} bytes fewer "
-            f"than expected ({download_num_bytes:,}) (error code rf4n374kdm)"
-          )
+          output_file.write(chunk)
+          progress_bar.update(len(chunk))
 
-  @classmethod
-  def _verify_sigstore_signature(
-    cls,
-    llvm_version: str,
-    file_to_verify: pathlib.Path,
-    signature_file: pathlib.Path,
-    logger: logging.Logger,
-  ) -> None:
-    logger.info(
-      "Verifying signature of file %s using sigstore bundle from file %s",
-      file_to_verify,
-      signature_file,
-    )
+      if downloaded_num_bytes != download_num_bytes:
+        raise TooFewBytesDownloadedError(
+          f"Downloaded {downloaded_num_bytes:,} bytes from {download_url}, "
+          f"which is {download_num_bytes - downloaded_num_bytes:,} bytes fewer "
+          f"than expected ({download_num_bytes:,}) (error code rf4n374kdm)"
+        )
 
-    cert_identity = (
-      "https://github.com/llvm/llvm-project/"
-      ".github/workflows/release-binaries.yml"
-      f"@refs/tags/llvmorg-{llvm_version}"
-    )
+  return download_url
 
-    sigstore_args: list[str] = [
-      sys.executable,
-      "-m",
-      "sigstore",
-      "verify",
-      "github",
-      "--bundle",
-      str(signature_file),
-      "--cert-identity",
-      cert_identity,
-      str(file_to_verify),
-    ]
 
-    if logger.isEnabledFor(logging.DEBUG):
-      sigstore_args.append("--verbose")
-      output_file = None
-      stdout = None
-      stderr = None
-    elif logger.isEnabledFor(logging.INFO):
-      output_file = None
-      stdout = None
-      stderr = None
-    else:
-      output_file = tempfile.TemporaryFile()
-      stdout = output_file
-      stderr = subprocess.STDOUT
+class TooManyBytesDownloadedError(Exception):
+  pass
 
-    logging.info("Running command: {subprocess.list2cmdline(sigstore_args)}")
-    sigstore_completed_process = subprocess.run(
-      sigstore_args,
-      stdout=stdout,
-      stderr=stderr,
-    )
 
-    if sigstore_completed_process.returncode != 0:
-      if output_file is not None:
-        output_file.seek(0)
-        # Limit the number of bytes read to avoid unbounded memory usage.
-        stdout_bytes = output_file.read(131072)
-        stdout_text = stdout_bytes.decode("utf8", errors="replace").strip()
-        if stdout_text:
-          logger.warning(stdout_text)
+class TooFewBytesDownloadedError(Exception):
+  pass
 
-      raise cls.SignatureVerificationError(
-        f"Verifying sigstore signature of {file_to_verify} failed: "
-        f"command completed with non-zero exit code {sigstore_completed_process.returncode}: "
-        + subprocess.list2cmdline(sigstore_args)
-      )
 
-  class TooManyBytesDownloadedError(Exception):
-    pass
-
-  class TooFewBytesDownloadedError(Exception):
-    pass
-
-  class SignatureVerificationError(Exception):
-    pass
+class SignatureVerificationError(Exception):
+  pass
 
 
 class AssetNotFoundError(Exception):
