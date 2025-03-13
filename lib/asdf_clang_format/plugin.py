@@ -34,7 +34,7 @@ def main() -> None:
       download(
         clang_format_version=command.clang_format_version,
         download_dir=command.download_dir,
-        stop_after_verify=command.stop_after == DownloadCommand.StopAfter.VERIFY,
+        stop_after=command.stop_after,
         temp_dir_factory=parsed_args.temp_dir_factory,
         logger=logger,
       )
@@ -70,7 +70,7 @@ def list_all(logger: logging.Logger) -> None:
 def download(
   clang_format_version: str,
   download_dir: pathlib.Path,
-  stop_after_verify: bool,
+  stop_after: DownloadCommand.StopAfter | None,
   temp_dir_factory: TempDirFactory,
   logger: logging.Logger,
 ) -> None:
@@ -94,11 +94,26 @@ def download(
     signature_file=signature_downloader.dest_file,
     logger=logger,
   )
-  tarxz_downloader.download_and_verify_sigstore_signature(clang_format_version)
+  tarxz_downloader.download()
 
-  if stop_after_verify:
-    logging.info("Stopping after verifying the signature of %s, as requested", tarxz_file_name)
+  if stop_after == DownloadCommand.StopAfter.DOWNLOAD:
+    logging.info(
+      "Stopping after downloading %s and %s, as requested",
+      signature_downloader.asset.download_url,
+      tarxz_downloader.asset.download_url,
+    )
     return
+
+  tarxz_downloader.verify_sigstore_signature(clang_format_version)
+
+  if stop_after == DownloadCommand.StopAfter.VERIFY:
+    logging.info("Stopping after verifying signature of %s, as requested", tarxz_file_name)
+    return
+
+  # Make sure that all possible "stop after" values have been considered.
+  # The line below will fail type checking if a new value is ever added to the StopAfter enum,
+  # which will draw attention to the fact that it should be handled.
+  typing.assert_type(stop_after, None)
 
   downloaded_clang_format_file = untar_single_file(
     tarxz_file=tarxz_downloader.dest_file,
@@ -414,10 +429,6 @@ class AssetDownloader:
 
   def download(self) -> None:
     self._download(self.asset, self.dest_file, self.logger)
-
-  def download_and_verify_sigstore_signature(self, llvm_version: str) -> None:
-    self._download(self.asset, self.dest_file, self.logger)
-    self.verify_sigstore_signature(llvm_version)
 
   def verify_sigstore_signature(self, llvm_version: str) -> None:
     file_to_verify = self.dest_file
