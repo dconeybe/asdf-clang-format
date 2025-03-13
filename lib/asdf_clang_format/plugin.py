@@ -98,7 +98,7 @@ def download(
 
   if stop_after == DownloadCommand.StopAfter.DOWNLOAD:
     logging.info(
-      "Stopping after downloading %s to %s and %s to %s, as requested",
+      "As requested, stopping after downloading %s to %s and %s to %s",
       signature_downloader.asset.download_url,
       signature_downloader.dest_file,
       tarxz_downloader.asset.download_url,
@@ -109,7 +109,14 @@ def download(
   tarxz_downloader.verify_sigstore_signature(clang_format_version)
 
   if stop_after == DownloadCommand.StopAfter.VERIFY:
-    logging.info("Stopping after verifying signature of %s, as requested", tarxz_file_name)
+    logging.info(
+      "As requested, stopping after verifying signature of %s (downloaded from %s) "
+      "using signing info from %s (downloaded from %s)",
+      tarxz_downloader.dest_file,
+      tarxz_downloader.asset.download_url,
+      signature_downloader.dest_file,
+      signature_downloader.asset.download_url,
+    )
     return
 
   # Make sure that all possible "stop after" values have been considered.
