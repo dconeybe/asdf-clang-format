@@ -1,7 +1,6 @@
-import abc
-import argparse
+from __future__ import annotations
+
 from collections.abc import Sequence
-import contextlib
 import dataclasses
 import logging
 import pathlib
@@ -12,218 +11,40 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-from types import TracebackType
 import typing
+
+from .argument_parser import ArgumentParser, ListAllCommand, DownloadCommand, InstallCommand
+from .tempdir import TempDirFactory
 
 import requests
 import tqdm
 
 
 def main() -> None:
-  arg_parser = argparse.ArgumentParser()
-  arg_parser.set_defaults(command=None)
+  arg_parser = ArgumentParser()
+  parsed_args = arg_parser.parse()
 
-  log_level_arg = arg_parser.add_argument(
-    "--log-level",
-    default="info",
-    choices=("info", "debug", "warning"),
-    help="The level of log output to emit (default: %(default)s)",
-  )
-  arg_parser.add_argument(
-    "-v",
-    "--verbose",
-    action="store_const",
-    const="debug",
-    dest=log_level_arg.dest,
-    help=f"shorthand for {log_level_arg.option_strings[0]}=%(const)s",
-  )
-  arg_parser.add_argument(
-    "-q",
-    "--quiet",
-    action="store_const",
-    const="warning",
-    dest=log_level_arg.dest,
-    help=f"shorthand for {log_level_arg.option_strings[0]}=%(const)s",
-  )
-  arg_parser.add_argument(
-    "--temp-dir",
-    default=None,
-    help="The directory to use as a temporary directory, instead of creating and deleting "
-    "ephemeral temporary directories (useful for debugging)",
-  )
-
-  subparsers = arg_parser.add_subparsers()
-
-  list_all_subparser = subparsers.add_parser("list-all")
-  list_all_subparser.set_defaults(command="list-all")
-
-  download_subparser = subparsers.add_parser("download")
-  download_subparser.set_defaults(command="download")
-  download_subparser.add_argument("--clang-format-version", required=True)
-  download_subparser.add_argument("--download-dir", required=True)
-  download_subparser.add_argument("--stop-after-verify", action="store_true", default=False)
-
-  install_subparser = subparsers.add_parser("install")
-  install_subparser.set_defaults(command="install")
-  install_subparser.add_argument("--clang-format-version", required=True)
-  install_subparser.add_argument("--download-dir", required=True)
-  install_subparser.add_argument("--install-dir", required=True)
-
-  parsed_args = arg_parser.parse_args()
-
-  match parsed_args.log_level:
-    case None:
-      logging.basicConfig()
-    case "info":
-      logging.basicConfig(level=logging.INFO)
-    case "debug":
-      logging.basicConfig(level=logging.DEBUG)
-    case "warning":
-      logging.basicConfig(level=logging.WARNING)
-    case unknown_log_level:
-      raise Exception(f"internal error a37myxrv6a: unknown log level name: {unknown_log_level}")
-
+  logging.basicConfig(level=parsed_args.log_level)
   logger = logging.getLogger()
 
   match parsed_args.command:
-    case None:
-      print("ERROR: no sub-command specified (error code j53fg4ce6r)", file=sys.stderr)
-      print("Run with --help for help", file=sys.stderr)
-      sys.exit(2)
-    case "list-all":
+    case ListAllCommand():
       list_all(logger=logger)
-    case "download":
-      clang_format_version = parsed_args.clang_format_version
-      download_dir = pathlib.Path(parsed_args.download_dir)
-      match parsed_args.temp_dir:
-        case None:
-          temp_dir_factory = EphemeralTempDirFactory()
-        case temp_dir:
-          temp_dir_factory = PersistentTempDirFactory(pathlib.Path(temp_dir))
+    case DownloadCommand() as command:
       download(
-        clang_format_version=clang_format_version,
-        download_dir=download_dir,
-        stop_after_verify=parsed_args.stop_after_verify,
-        temp_dir_factory=temp_dir_factory,
+        clang_format_version=command.clang_format_version,
+        download_dir=command.download_dir,
+        stop_after=command.stop_after,
+        temp_dir_factory=parsed_args.temp_dir_factory,
         logger=logger,
       )
-    case "install":
-      clang_format_version = parsed_args.clang_format_version
-      download_dir = pathlib.Path(parsed_args.download_dir)
-      install_dir = pathlib.Path(parsed_args.install_dir)
+    case InstallCommand() as command:
       install(
-        clang_format_version=clang_format_version,
-        download_dir=download_dir,
-        install_dir=install_dir,
+        clang_format_version=command.clang_format_version,
+        download_dir=command.download_dir,
+        install_dir=command.install_dir,
         logger=logger,
       )
-    case unknown_command:
-      raise Exception(f"internal error ysnynaqa84: unknown command: {unknown_command}")
-
-
-class TempDir(contextlib.AbstractContextManager[pathlib.Path]):
-  @property
-  @abc.abstractmethod
-  def path(self) -> pathlib.Path: ...
-
-  @abc.abstractmethod
-  def cleanup(self) -> None: ...
-
-  def subdir(self, name: str) -> pathlib.Path:
-    scrubbed_name = scrubbed_file_name(name)
-    temp_sub_dir = tempfile.mkdtemp(prefix=f"{scrubbed_name}_", dir=self.path)
-    return pathlib.Path(temp_sub_dir)
-
-
-class TempDirFactory(typing.Protocol):
-  def get(self, name: str) -> TempDir: ...
-
-
-class PersistentTempDir(TempDir):
-  def __init__(self, path: pathlib.Path) -> None:
-    self._path = path
-
-  @property
-  @typing.override
-  def path(self) -> pathlib.Path:
-    return self._path
-
-  @typing.override
-  def cleanup(self) -> None:
-    # Do nothing on cleanup; we are a "persistent" temporary directory after all.
-    pass
-
-  def __str__(self) -> str:
-    return self.path.__str__()
-
-  def __repr__(self) -> str:
-    return f"PersistentTempDir({self.path!r})"
-
-  @typing.override
-  def __enter__(self) -> pathlib.Path:
-    return self.path
-
-  @typing.override
-  def __exit__(
-    self,
-    exc_type: type[BaseException] | None,
-    exc_value: BaseException | None,
-    traceback: TracebackType | None,
-  ) -> bool | None:
-    pass
-
-
-class PersistentTempDirFactory(TempDirFactory):
-  def __init__(self, path: pathlib.Path) -> None:
-    self.path = path
-
-  def get(self, name: str) -> PersistentTempDir:
-    scrubbed_name = scrubbed_file_name(name)
-    self.path.mkdir(parents=True, exist_ok=True)
-    temp_dir = tempfile.mkdtemp(prefix=f"{scrubbed_name}_", dir=self.path)
-    return PersistentTempDir(pathlib.Path(temp_dir))
-
-
-class EphemeralTempDir(TempDir):
-  def __init__(self, temp_dir: tempfile.TemporaryDirectory[str]) -> None:
-    self.temp_dir = temp_dir
-    self._path = pathlib.Path(temp_dir.name)
-
-  @property
-  @typing.override
-  def path(self) -> pathlib.Path:
-    return self._path
-
-  @typing.override
-  def cleanup(self) -> None:
-    self.temp_dir.cleanup()
-
-  def __str__(self) -> str:
-    return self.temp_dir.__str__()
-
-  def __repr__(self) -> str:
-    return f"EphemeralTempDir({self.temp_dir!r})"
-
-  @typing.override
-  def __enter__(self) -> pathlib.Path:
-    self.temp_dir.__enter__()
-    return self.path
-
-  @typing.override
-  def __exit__(
-    self,
-    exc_type: type[BaseException] | None,
-    exc_value: BaseException | None,
-    traceback: TracebackType | None,
-  ) -> bool | None:
-    return self.temp_dir.__exit__(exc_type, exc_value, traceback)
-
-
-class EphemeralTempDirFactory(TempDirFactory):
-  def get(self, name: str) -> EphemeralTempDir:
-    scrubbed_name = scrubbed_file_name(name)
-    temp_dir = tempfile.TemporaryDirectory(prefix=f"{scrubbed_name}_")
-    return EphemeralTempDir(temp_dir)
 
 
 def list_all(logger: logging.Logger) -> None:
@@ -249,7 +70,7 @@ def list_all(logger: logging.Logger) -> None:
 def download(
   clang_format_version: str,
   download_dir: pathlib.Path,
-  stop_after_verify: bool,
+  stop_after: DownloadCommand.StopAfter | None,
   temp_dir_factory: TempDirFactory,
   logger: logging.Logger,
 ) -> None:
@@ -273,11 +94,35 @@ def download(
     signature_file=signature_downloader.dest_file,
     logger=logger,
   )
-  tarxz_downloader.download_and_verify_sigstore_signature(clang_format_version)
+  tarxz_downloader.download()
 
-  if stop_after_verify:
-    logging.info("Stopping after verifying the signature of %s, as requested", tarxz_file_name)
+  if stop_after == DownloadCommand.StopAfter.DOWNLOAD:
+    logging.info(
+      "As requested, stopping after downloading %s to %s and %s to %s",
+      signature_downloader.asset.download_url,
+      signature_downloader.dest_file,
+      tarxz_downloader.asset.download_url,
+      tarxz_downloader.dest_file,
+    )
     return
+
+  tarxz_downloader.verify_sigstore_signature(clang_format_version)
+
+  if stop_after == DownloadCommand.StopAfter.VERIFY:
+    logging.info(
+      "As requested, stopping after verifying signature of %s (downloaded from %s) "
+      "using signing info from %s (downloaded from %s)",
+      tarxz_downloader.dest_file,
+      tarxz_downloader.asset.download_url,
+      signature_downloader.dest_file,
+      signature_downloader.asset.download_url,
+    )
+    return
+
+  # Make sure that all possible "stop after" values have been considered.
+  # The line below will fail type checking if a new value is ever added to the StopAfter enum,
+  # which will draw attention to the fact that it should be handled.
+  typing.assert_type(stop_after, None)
 
   downloaded_clang_format_file = untar_single_file(
     tarxz_file=tarxz_downloader.dest_file,
@@ -314,10 +159,6 @@ def install(
 
   dest_file.parent.mkdir(parents=True, exist_ok=True)
   shutil.copy2(src_file, dest_file)
-
-
-def scrubbed_file_name(s: str) -> str:
-  return "".join(c if c.isalnum() or c.isidentifier() else "_" for c in s)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -598,10 +439,6 @@ class AssetDownloader:
   def download(self) -> None:
     self._download(self.asset, self.dest_file, self.logger)
 
-  def download_and_verify_sigstore_signature(self, llvm_version: str) -> None:
-    self._download(self.asset, self.dest_file, self.logger)
-    self.verify_sigstore_signature(llvm_version)
-
   def verify_sigstore_signature(self, llvm_version: str) -> None:
     file_to_verify = self.dest_file
     signature_file = self.signature_file
@@ -769,11 +606,3 @@ class UnsupportedPlatformError(Exception):
 
 class DownloadedFileNotFoundError(Exception):
   pass
-
-
-if __name__ == "__main__":
-  try:
-    main()
-  except KeyboardInterrupt:
-    print("ERROR: application terminated by keyboard interrupt", file=sys.stderr)
-    sys.exit(1)

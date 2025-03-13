@@ -2,17 +2,16 @@
 
 set -euo pipefail
 
-readonly current_script_path=${BASH_SOURCE[0]}
-readonly plugin_dir="$(dirname "$(dirname "$current_script_path")")/lib"
+readonly run_plugin_sh_path="$(dirname "${BASH_SOURCE[0]}")/run_plugin.sh"
 
 readonly args=(
-  python
-  "$plugin_dir/plugin.py"
+  "${run_plugin_sh_path}"
   "--quiet"
   install
   "--clang-format-version=$ASDF_INSTALL_VERSION"
   "--download-dir=$ASDF_DOWNLOAD_PATH"
   "--install-dir=$ASDF_INSTALL_PATH"
+  "$@"
 )
 
 exec "${args[@]}"
