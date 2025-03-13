@@ -98,9 +98,11 @@ def download(
 
   if stop_after == DownloadCommand.StopAfter.DOWNLOAD:
     logging.info(
-      "Stopping after downloading %s and %s, as requested",
+      "Stopping after downloading %s to %s and %s to %s, as requested",
       signature_downloader.asset.download_url,
+      signature_downloader.dest_file,
       tarxz_downloader.asset.download_url,
+      tarxz_downloader.dest_file,
     )
     return
 
