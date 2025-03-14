@@ -10,7 +10,6 @@ readonly args=(
   download
   "--clang-format-version=$ASDF_INSTALL_VERSION"
   "--download-dir=$ASDF_DOWNLOAD_PATH"
-  "--llvm-release-keys-file=$plugin_dir/release-keys.asc"
   "$@"
 )
 
