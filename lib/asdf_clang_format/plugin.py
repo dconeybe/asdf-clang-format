@@ -511,6 +511,7 @@ def download_github_release_asset(
     total=download_num_bytes,
     leave=False,
     unit=" bytes",
+    unit_scale=True,
     dynamic_ncols=True,
   )
   with progress_bar_context_manager as progress_bar:
